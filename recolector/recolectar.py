@@ -471,6 +471,17 @@ def una_vuelta():
     subir()
 
 def prueba():
+    r = yt("browse", browseId="UCFgk2Q2mVO1BklRQhSv6p0w", params=P_ABOUT)
+    t = json.dumps(r)
+    log("ABOUT len", len(t), "keys", list(r.keys()))
+    for m in re.finditer(r'.{120}(views|videos|aboutChannel|continuationCommand|showEngagementPanel).{200}', t):
+        log("ABOUT>>", m.group(0)[:330])
+    r2 = yt("browse", browseId="UCFgk2Q2mVO1BklRQhSv6p0w")
+    t2 = json.dumps(r2)
+    for m in re.finditer(r'.{150}(aboutChannel|\d videos|channelAboutFullMetadata|"token").{250}', t2):
+        log("HOME>>", m.group(0)[:420])
+    log("TN search", buscar_canal("TN Todo Noticias"))
+    return
     for h in ("@todonoticias", "@LuzuTV", "@c5n"):
         cid = resolver_handle(h)
         log("resolver", h, cid)
