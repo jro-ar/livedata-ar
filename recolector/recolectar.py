@@ -487,7 +487,27 @@ def prueba():
             for v in vs[:3]: log("detalle", v["vid"], detalle_vivo(v["vid"]))
         except Exception as e: log("vivos ERROR", e)
 
+def buscar_lista():
+    qs = ["TN Todo Noticias en vivo", "LN+", "IP Noticias", "Television Publica Argentina", "America TV", "Net TV", "Blender", "La Casa streaming",
+          "Azz", "Picante", "El Destape", "Canal E", "Radio con Vos", "Radio 10", "AM750", "Aspen 102.3", "Radio Continental 590", "ESPN Argentina",
+          "Ole", "DSports", "Seleccion Argentina", "Boca Juniors", "Senado Argentina", "Javier Milei", "Metro 95.1", "Rock and Pop 95.9", "Urbana Play",
+          "Telefe Noticias", "Gravedad Zero", "Cronica TV", "Congreso Argentino diputados", "TyC Sports", "Futurock", "Republica Z", "Carajo", "Neura"]
+    for q in qs:
+        try:
+            r = yt("search", query=q, params=P_BUSCAR_CANAL)
+            res = []
+            for d in recorrer(r):
+                cr = d.get("channelRenderer")
+                if cr:
+                    res.append((cr.get("channelId"), texto(cr.get("title")), texto(cr.get("subscriberCountText")), texto(cr.get("videoCountText"))))
+            res = res[:4]
+            log("BUSCAR", q, "=>", " | ".join(f"{a} {b} [{c} / {d}]" for a, b, c, d in res))
+        except Exception as e:
+            log("BUSCAR", q, "ERROR", e)
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "buscar":
+        return buscar_lista()
     if len(sys.argv) > 1 and sys.argv[1] == "prueba":
         return prueba()
     minutos = float(sys.argv[1]) if len(sys.argv) > 1 else 0
