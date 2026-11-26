@@ -471,30 +471,21 @@ def una_vuelta():
     subir()
 
 def prueba():
-    r = yt("browse", browseId="UCFgk2Q2mVO1BklRQhSv6p0w", params=P_ABOUT)
-    t = json.dumps(r)
-    log("ABOUT len", len(t), "keys", list(r.keys()))
-    for m in re.finditer(r'.{120}(views|videos|aboutChannel|continuationCommand|showEngagementPanel).{200}', t):
-        log("ABOUT>>", m.group(0)[:330])
-    r2 = yt("browse", browseId="UCFgk2Q2mVO1BklRQhSv6p0w")
-    t2 = json.dumps(r2)
-    for m in re.finditer(r'.{150}(aboutChannel|\d videos|channelAboutFullMetadata|"token").{250}', t2):
-        log("HOME>>", m.group(0)[:420])
-    log("TN search", buscar_canal("TN Todo Noticias"))
-    return
-    for h in ("@todonoticias", "@LuzuTV", "@c5n"):
-        cid = resolver_handle(h)
-        log("resolver", h, cid)
-        if not cid: continue
-        try: log("info", info_canal(cid))
-        except Exception as e: log("info ERROR", e)
+    r = yt("browse", browseId="UCFgk2Q2mVO1BklRQhSv6p0w")
+    h = json.dumps(r.get("header", {}))
+    log("HEADER len", len(h))
+    for m in re.finditer(r'"token": "([^"]+)"', h):
+        tok = m.group(1); log("TOKEN", tok[:80])
         try:
-            vs = vivos_del_canal(cid); log("vivos", vs)
-            for v in vs[:3]: log("detalle", v["vid"], detalle_vivo(v["vid"]))
-        except Exception as e: log("vivos ERROR", e)
-        try: log("rss", rss(cid)[:2])
-        except Exception as e: log("rss ERROR", e)
-    log("buscar 'Olga en vivo' ->", buscar_canal("OLGA en vivo"))
+            r2 = yt("browse", continuation=tok)
+            for d in recorrer(r2):
+                if "aboutChannelViewModel" in d:
+                    log("ABOUT OK", json.dumps(d["aboutChannelViewModel"])[:1500]); break
+            else:
+                log("sin about", json.dumps(r2)[:300])
+        except Exception as e: log("ERR", e)
+    for m in re.finditer(r'.{60}(subscribers|videos").{60}', h): log("HDR>>", m.group(0))
+    log("TN search", buscar_canal("TN Todo Noticias"))
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "prueba":
