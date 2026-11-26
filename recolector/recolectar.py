@@ -22,6 +22,11 @@ CLIENTE = {"clientName": "WEB", "clientVersion": "2.20251120.01.00", "hl": "en",
 P_STREAMS = "EgdzdHJlYW1z8gYECgJ6AA%3D%3D"
 P_ABOUT = "EgVhYm91dPIGBAoCEgA%3D"
 P_BUSCAR_CANAL = "EgIQAg%3D%3D"
+P_BUSCAR_VIVO = "EgJAAQ%3D%3D"
+BUSQUEDAS_VIVO = ["en vivo", "en vivo argentina", "streaming argentina", "stream en vivo", "radio en vivo", "fm en vivo",
+                  "noticias en vivo", "canal en vivo", "tv en vivo argentina", "futbol argentino en vivo", "en directo argentina",
+                  "programa en vivo", "aire en vivo", "vivo hoy", "en vivo buenos aires", "en vivo cordoba", "en vivo rosario",
+                  "en vivo mendoza", "en vivo santa fe", "radio argentina", "stream", "envivo", "live argentina"]
 
 def log(*a):
     print(datetime.now(AR).strftime("%H:%M:%S"), *a, flush=True)
@@ -202,6 +207,33 @@ def detalle_vivo(vid):
         if "updateTitleAction" in d:
             out["titulo"] = texto(d["updateTitleAction"].get("title"))
     return out
+
+def descubrir_vivos():
+    """Busca en YouTube transmisiones en vivo (Argentina) para encontrar canales nuevos."""
+    encontrados = {}
+    def una(q):
+        try:
+            r = yt("search", query=q, params=P_BUSCAR_VIVO)
+        except Exception:
+            return []
+        out = []
+        for d in recorrer(r):
+            vr = d.get("videoRenderer")
+            if not vr: continue
+            s = json.dumps(vr)
+            if "LIVE" not in s and " watching" not in s: continue
+            cid = None
+            for run in (vr.get("ownerText") or vr.get("longBylineText") or {}).get("runs", []):
+                cid = run.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId") or cid
+            if not cid: continue
+            out.append((cid, texto(vr.get("ownerText") or vr.get("longBylineText")), numero(texto(vr.get("viewCountText"))) or 0, texto(vr.get("title"))))
+        return out
+    with ThreadPoolExecutor(6) as ex:
+        for lista in ex.map(una, BUSQUEDAS_VIVO):
+            for cid, nom, n, tit in lista:
+                e = encontrados.setdefault(cid, {"id": cid, "nombre": nom, "viewers": 0, "titulo": tit})
+                e["viewers"] = max(e["viewers"], n)
+    return encontrados
 
 def rss(cid):
     txt = http(f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}")
@@ -505,7 +537,21 @@ def buscar_lista():
         except Exception as e:
             log("BUSCAR", q, "ERROR", e)
 
+def prueba_descubrir():
+    enc = descubrir_vivos()
+    log("descubiertos", len(enc))
+    def inf(e):
+        try: e["pais"] = info_canal(e["id"]).get("pais")
+        except Exception: e["pais"] = "?"
+        return e
+    with ThreadPoolExecutor(8) as ex:
+        lista = list(ex.map(inf, sorted(enc.values(), key=lambda x: -x["viewers"])[:150]))
+    for e in lista:
+        log("DESC", e["viewers"], e["pais"], e["nombre"], "|", e["titulo"][:50], e["id"])
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "descubrir":
+        return prueba_descubrir()
     if len(sys.argv) > 1 and sys.argv[1] == "buscar":
         return buscar_lista()
     if len(sys.argv) > 1 and sys.argv[1] == "prueba":
