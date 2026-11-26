@@ -43,7 +43,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 function fmt(n) {
   if (n == null || isNaN(n)) return "—";
   const a = Math.abs(n);
-  if (a >= 1e9) return (n / 1e9).toFixed(1).replace(".", ",") + "B";
+  if (a >= 1e9) return (n / 1e9).toFixed(1).replace(".", ",") + " MM";
   if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(".", ",") + "M";
   if (a >= 1e4) return (n / 1e3).toFixed(1).replace(".", ",") + "K";
   return Math.round(n).toLocaleString("es-AR");
@@ -259,7 +259,7 @@ V.canal = async (cid) => {
   const pico7 = Math.max(0, ...ult7.map((f) => res[f]?.[cid]?.pico || 0));
   const horas7 = ult7.reduce((s, f) => s + (res[f]?.[cid]?.horas || 0), 0);
   const min7 = ult7.reduce((s, f) => s + (res[f]?.[cid]?.min || 0), 0);
-  const s0 = st0.datos?.[cid] || {}, s7 = st7.datos?.[cid] || {}, s30 = st30.datos?.[cid] || {};
+  const s0 = st0.datos?.[cid] || {}, s7 = st7.fecha !== st0.fecha ? st7.datos?.[cid] || {} : {}, s30 = st30.fecha !== st0.fecha ? st30.datos?.[cid] || {} : {};
   const misFin = (fin || []).filter((f) => f.cid === cid).slice(0, 50);
   const misVids = Object.values(vids || {}).filter((v) => v.cid === cid).sort((x, y) => (y.publicado || "").localeCompare(x.publicado || "")).slice(0, 15);
   const enVivo = (a?.lives || []).filter((l) => l.cid === cid);
