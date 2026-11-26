@@ -1,0 +1,14 @@
+name: Diagnostico
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "buscar o prueba"
+        default: "buscar"
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 recolector/recolectar.py "${{ github.event.inputs.modo }}"
