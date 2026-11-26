@@ -641,7 +641,36 @@ def prueba_descubrir():
     for e in lista:
         log("DESC", e["viewers"], e["pais"], e["nombre"], "|", e["titulo"][:50], e["id"])
 
+def prueba_endpoints():
+    vid = "rZtTUCxpPuI"
+    try:
+        r = yt("player", videoId=vid)
+        mf = r.get("microformat", {}).get("playerMicroformatRenderer", {})
+        log("PLAYER live", json.dumps(mf.get("liveBroadcastDetails")), "status", r.get("playabilityStatus", {}).get("status"))
+    except Exception as e: log("PLAYER ERR", e)
+    try:
+        r = yt("next", videoId=vid)
+        t = json.dumps(r)
+        m = re.findall(r'along with ([\d,]+) other', t)
+        log("NEXT likes", m[:3], re.findall(r'"likeCount[^,]{0,60}', t)[:3], re.findall(r'.{80}I like this.{80}', t)[:1])
+    except Exception as e: log("NEXT ERR", e)
+    try:
+        r = yt("updated_metadata", videoId=vid)
+        t = json.dumps(r)
+        log("UPD", re.findall(r'"(update\w+Action)"', t), re.findall(r'TOGGLE_BUTTON_ID_TYPE_LIKE.{0,200}', t)[:1], re.findall(r'.{60}dateText.{120}', t)[:1])
+    except Exception as e: log("UPD ERR", e)
+    txt = http("https://www.youtube.com/feeds/videos.xml?channel_id=UCFgk2Q2mVO1BklRQhSv6p0w")
+    log("RSS links", re.findall(r'<link rel="alternate" href="([^"]+)"', txt)[:16])
+    for g, q in (("CO", "en vivo"), ("BR", "ao vivo"), ("US", "live")):
+        c2 = dict(CLIENTE); c2["gl"] = g
+        cuerpo = {"context": {"client": c2}, "query": q, "params": P_BUSCAR_VIVO}
+        r = json.loads(http("https://www.youtube.com/youtubei/v1/search?prettyPrint=false", cuerpo))
+        vs = [texto(d["videoRenderer"].get("ownerText")) + ":" + texto(d["videoRenderer"].get("viewCountText")) for d in recorrer(r) if "videoRenderer" in d]
+        log("SEARCH", g, len(vs), vs[:6])
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "endpoints":
+        return prueba_endpoints()
     if len(sys.argv) > 1 and sys.argv[1] == "descubrir":
         return prueba_descubrir()
     if len(sys.argv) > 1 and sys.argv[1] == "buscar":
