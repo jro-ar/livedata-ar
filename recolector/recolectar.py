@@ -255,22 +255,29 @@ def megustas(vid):
     m = re.search(r"along with ([\d,]+) other", t)
     return int(m.group(1).replace(",", "")) if m else None
 
-def buscar_vivos(q, gl):
+def buscar_vivos(q, gl, paginas=1):
     """Busqueda de transmisiones en vivo: devuelve (canal, nombre, video, titulo, espectadores)."""
-    try: r = yt("search", gl=gl, query=q, params=P_BUSCAR_VIVO)
-    except Exception: return []
-    out = []
-    for d in recorrer(r):
-        vr = d.get("videoRenderer")
-        if not vr: continue
-        vc = texto(vr.get("viewCountText"))
-        if " watching" not in vc: continue
-        owner = vr.get("ownerText") or vr.get("longBylineText") or {}
-        cid = None
-        for run in owner.get("runs", []):
-            cid = run.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId") or cid
-        if cid:
-            out.append({"cid": cid, "nombre": texto(owner), "vid": vr.get("videoId"), "titulo": texto(vr.get("title")), "viewers": numero(vc) or 0})
+    out, token = [], None
+    for _ in range(paginas):
+        try:
+            r = yt("search", gl=gl, continuation=token) if token else yt("search", gl=gl, query=q, params=P_BUSCAR_VIVO)
+        except Exception:
+            break
+        token = None
+        for d in recorrer(r):
+            if "continuationCommand" in d and d["continuationCommand"].get("token"):
+                token = d["continuationCommand"]["token"]
+            vr = d.get("videoRenderer")
+            if not vr: continue
+            vc = texto(vr.get("viewCountText"))
+            if " watching" not in vc: continue
+            owner = vr.get("ownerText") or vr.get("longBylineText") or {}
+            cid = None
+            for run in owner.get("runs", []):
+                cid = run.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId") or cid
+            if cid:
+                out.append({"cid": cid, "nombre": texto(owner), "vid": vr.get("videoId"), "titulo": texto(vr.get("title")), "viewers": numero(vc) or 0})
+        if not token: break
     return out
 
 def rss(cid):
@@ -339,7 +346,7 @@ def descubrir(canales, paises):
     tareas = [(q, p) for p in paises for q in PAISES[p]["q"]]
     vistos = {}
     with ThreadPoolExecutor(6) as ex:
-        for (q, p), lista in zip(tareas, ex.map(lambda t: buscar_vivos(t[0], t[1]), tareas)):
+        for (q, p), lista in zip(tareas, ex.map(lambda t: buscar_vivos(t[0], t[1], 4 if t[1] == "AR" else 2), tareas)):
             for v in lista:
                 e = vistos.setdefault(v["cid"], {"cid": v["cid"], "nombre": v["nombre"], "viewers": 0, "gl": p})
                 e["viewers"] = max(e["viewers"], v["viewers"])
@@ -350,7 +357,7 @@ def descubrir(canales, paises):
         except Exception: return e, None
     sumados = 0
     with ThreadPoolExecutor(6) as ex:
-        for e, i in ex.map(inf, nuevos[:80]):
+        for e, i in ex.map(inf, nuevos[:150]):
             if not i: continue
             iso = EN_A_ISO.get(i.get("pais_en") or "")
             if iso and (iso == "AR" or e["viewers"] >= 10):
