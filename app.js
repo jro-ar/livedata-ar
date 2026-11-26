@@ -120,7 +120,7 @@ function grafLineas(canvasId, etiquetas, series, opc = {}) {
   if (!el) return;
   const g = new Chart(el, {
     type: "line",
-    data: { labels: etiquetas, datasets: series.map((s, i) => ({ label: s.nombre, data: s.datos, borderColor: s.color || COLORES[i % COLORES.length], backgroundColor: (s.color || COLORES[i % COLORES.length]) + "22", fill: !!s.relleno, tension: 0.35, pointRadius: 0, borderWidth: 2, spanGaps: false })) },
+    data: { labels: etiquetas, datasets: series.map((s, i) => ({ label: s.nombre, data: s.datos, borderColor: s.color || COLORES[i % COLORES.length], backgroundColor: (s.color || COLORES[i % COLORES.length]) + "22", fill: !!s.relleno, tension: 0.35, pointRadius: etiquetas.length < 4 ? 4 : 0, borderWidth: 2, spanGaps: false })) },
     options: {
       responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
       plugins: { legend: { display: series.length > 1, labels: { boxWidth: 10, usePointStyle: true } }, tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${entero(c.parsed.y)}` } } },
