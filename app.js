@@ -408,15 +408,16 @@ V.favoritos = async () => {
 /* ---------------- Tendencias */
 V.tendencias = async () => {
   const p = S.pais;
-  const [a, can, rec, vids] = await Promise.all([D.ahora(), D.canales(), D.records(), D.videos()]);
+  const [a, can, rec, vids, diasIdx] = await Promise.all([D.ahora(), D.canales(), D.records(), D.videos(), D.dias()]);
   if (!a || !can) return sinDatos();
   const lives = a.lives.filter(enPais(p));
+  const hayHistoria = (diasIdx?.[p === "GL" ? "AR" : p] || []).length >= 3;
   const t = a.t;
   const ascenso = lives.map((l) => { const base = l.v1h != null ? l.v1h : t - l.ini <= 60 ? 0 : null; return base == null ? null : { l, g: l.viewers - base, pc: base ? pct(l.viewers, base) : null }; }).filter((x) => x && x.g > 0).sort((x, y) => y.g - x.g).slice(0, 12);
   const mg = lives.filter((l) => l.mg2h > 0).sort((x, y) => y.mg2h - x.mg2h).slice(0, 12);
   const recien = lives.filter((l) => t - l.ini <= 20).sort((x, y) => y.viewers - x.viewers).slice(0, 12);
   const pcv = {}; lives.forEach((l) => (pcv[l.cid] = (pcv[l.cid] || 0) + l.viewers));
-  const maximo = Object.entries(pcv).map(([cid, n]) => ({ cid, n, r: Math.max(n, rec?.[cid] || n), f: n / Math.max(n, rec?.[cid] || n) })).filter((x) => x.f >= 0.5 && x.r >= 100).sort((x, y) => y.f - x.f).slice(0, 12);
+  const maximo = Object.entries(pcv).map(([cid, n]) => ({ cid, n, r: Math.max(n, rec?.[cid] || n), f: n / Math.max(n, rec?.[cid] || n) })).filter((x) => hayHistoria && x.f >= 0.5 && x.r >= 100).sort((x, y) => y.f - x.f).slice(0, 12);
   const durCanal = (cid) => { const l = lives.find((x) => x.cid === cid); return l ? dur(t - l.ini) : ""; };
   const hace7 = hoyAR(7), desde7 = new Date(Date.now() - 7 * 86400e3).toISOString();
   const ganancia = (v) => { const h = v.h || {}; const fs = Object.keys(h).sort(); const base = fs.filter((f) => f <= hace7).pop(); if ((v.publicado || "") >= desde7) return v.vistas || 0; return base ? (v.vistas || 0) - h[base] : null; };
@@ -429,7 +430,7 @@ V.tendencias = async () => {
   ${sec("🔥", "En ascenso", "Vivos creciendo ahora mismo", ascenso.map((x) => `<a class="ct" style="--c:var(--verde)" href="${ytv(x.l.vid)}" target="_blank" rel="noopener">${cabC(x.l.cid, dur(t - x.l.ini))}<div class="grande verde">+${miles(x.g)}</div><div class="lbl">viewers en 1h</div><div class="pie">${K(x.l.viewers)} actuales ${x.pc != null ? `· <span class="pct">+${pctNum(x.pc)}%</span>` : ""}</div></a>`).join(""))}
   ${sec("❤️", "MG al rojo", "Más megustas ganados en las últimas 2h", mg.map((l) => `<a class="ct" style="--c:var(--rosa)" href="${ytv(l.vid)}" target="_blank" rel="noopener">${cabC(l.cid, dur(t - l.ini))}<div class="grande rosa">+${miles(l.mg2h)}</div><div class="lbl">MG en ${l.mg2h_min && l.mg2h_min < 110 ? dur(l.mg2h_min) : "2h"}</div><div class="pie">${(l.mg2h / Math.max(1, l.viewers) * 1000).toFixed(1).replace(".", ",")} c/1k viewers · ${K(l.viewers)} viewers</div></a>`).join(""))}
   ${sec("⚡", "Recién arrancaron", "Lives iniciados en los últimos 20 min", recien.map((l) => `<a class="ct" style="--c:var(--azul)" href="${ytv(l.vid)}" target="_blank" rel="noopener"><div class="cab-c">${av(can[l.cid], "av28")}<div style="min-width:0"><div class="nom">${nom(can[l.cid])}</div><span class="pill-t">hace ${Math.max(1, t - l.ini)} min</span></div></div><div class="grande azul">${K(l.viewers)}</div><div class="lbl">viewers ahora</div><div class="tt">${esc(l.titulo)}</div></a>`).join(""))}
-  ${sec("🏆", "Cerca de su máximo", "Canales cerca de su pico histórico", maximo.map((x) => `<a class="ct" style="--c:var(--amarillo)" href="#/canal/${x.cid}">${cabC(x.cid, durCanal(x.cid))}<div class="grande amarillo">${Math.round(x.f * 100)}%</div><div class="lbl">del récord histórico</div><div class="barrita"><div style="width:${Math.round(x.f * 100)}%"></div></div><div class="pie">${K(x.n)} / ${K(x.r)}</div></a>`).join(""))}
+  ${sec("🏆", "Cerca de su máximo", "Canales cerca de su pico histórico" + (hayHistoria ? "" : " · se calcula cuando haya 3 días de datos"), maximo.map((x) => `<a class="ct" style="--c:var(--amarillo)" href="#/canal/${x.cid}">${cabC(x.cid, durCanal(x.cid))}<div class="grande amarillo">${Math.round(x.f * 100)}%</div><div class="lbl">del récord histórico</div><div class="barrita"><div style="width:${Math.round(x.f * 100)}%"></div></div><div class="pie">${K(x.n)} / ${K(x.r)}</div></a>`).join(""))}
   ${sec("🎬", "Videos explotando", "Más vistas en los últimos 7 días", explot.map((x) => `<a class="vid-c" href="${ytv(x.v.vid)}" target="_blank" rel="noopener"><div class="th"><img src="${thumb(x.v.vid)}" loading="lazy" alt=""></div><div class="cuerpo"><span class="gan">+${K(x.g)} en 7d</span><div class="tit3">${esc(x.v.titulo)}</div><div class="linea-canal" style="margin-top:6px">${av(can[x.v.cid], "av18")}<span>${nom(can[x.v.cid])}</span></div></div></a>`).join(""))}
   ${sec("📱", "Shorts virales", "Más vistas en los últimos 7 días", shorts.map((x) => `<a class="vid-c short" href="https://www.youtube.com/shorts/${x.v.vid}" target="_blank" rel="noopener"><div class="th"><img src="https://i.ytimg.com/vi/${x.v.vid}/oar2.jpg" onerror="this.onerror=null;this.src='${thumb(x.v.vid)}'" loading="lazy" alt=""></div><div class="cuerpo"><span class="gan">+${K(x.g)} en 7d</span><div class="tit3">${esc(x.v.titulo)}</div><div class="linea-canal" style="margin-top:6px">${av(can[x.v.cid], "av18")}<span>${nom(can[x.v.cid])}</span></div></div></a>`).join(""))}`;
   alCambiarPais(ruta);
