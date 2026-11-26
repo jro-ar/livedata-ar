@@ -134,8 +134,8 @@ def buscar_canal(q):
     return None
 
 def info_canal(cid):
-    """Nombre, foto, suscriptores, vistas totales y cantidad de videos."""
-    r = yt("browse", browseId=cid, params=P_ABOUT)
+    """Nombre, foto, suscriptores, vistas totales y cantidad de videos (panel "Acerca de")."""
+    r = yt("browse", browseId=cid, params=P_STREAMS)
     out = {"id": cid}
     md = r.get("metadata", {}).get("channelMetadataRenderer", {})
     if md:
@@ -143,19 +143,24 @@ def info_canal(cid):
         th = md.get("avatar", {}).get("thumbnails", [])
         if th: out["imagen"] = th[-1]["url"]
         out["handle"] = (md.get("vanityChannelUrl") or "").rsplit("/", 1)[-1] or None
-    for d in recorrer(r):
-        a = d.get("aboutChannelViewModel")
-        if a:
-            out["subs"] = numero(a.get("subscriberCountText"))
-            out["vistas"] = numero(a.get("viewCountText"))
-            out["videos"] = numero(a.get("videoCountText"))
-            out["pais"] = a.get("country")
-            break
-    if out.get("subs") is None:
-        s = json.dumps(r)
-        m = re.search(r'"([\d\.,]+[KMB]?) subscribers"', s)
-        if m: out["subs"] = numero(m.group(1))
-    out["verificado"] = "BADGE_STYLE_TYPE_VERIFIED" in json.dumps(r.get("header", {})) or "CHECK_CIRCLE_THICK" in json.dumps(r.get("header", {}))
+    header = r.get("header", {})
+    hs = json.dumps(header)
+    out["verificado"] = "CHECK_CIRCLE" in hs or "BADGE_STYLE_TYPE_VERIFIED" in hs
+    m = re.search(r'"([\d\.,]+[KMB]?) subscribers"', hs)
+    if m: out["subs"] = numero(m.group(1))
+    for tok in re.findall(r'"token": "([^"]+)"', hs)[:2]:
+        try:
+            r2 = yt("browse", continuation=tok)
+        except Exception:
+            continue
+        for d in recorrer(r2):
+            a = d.get("aboutChannelViewModel")
+            if a:
+                out["subs"] = numero(a.get("subscriberCountText")) or out.get("subs")
+                out["vistas"] = numero(a.get("viewCountText"))
+                out["videos"] = numero(a.get("videoCountText"))
+                out["pais"] = a.get("country")
+                return out
     return out
 
 def vivos_del_canal(cid):
@@ -471,21 +476,16 @@ def una_vuelta():
     subir()
 
 def prueba():
-    r = yt("browse", browseId="UCFgk2Q2mVO1BklRQhSv6p0w")
-    h = json.dumps(r.get("header", {}))
-    log("HEADER len", len(h))
-    for m in re.finditer(r'"token": "([^"]+)"', h):
-        tok = m.group(1); log("TOKEN", tok[:80])
+    for h in ("@LuzuTV", "@c5n"):
+        cid = resolver_handle(h)
+        log("resolver", h, cid)
+        if not cid: continue
+        try: log("info", info_canal(cid))
+        except Exception as e: log("info ERROR", e)
         try:
-            r2 = yt("browse", continuation=tok)
-            for d in recorrer(r2):
-                if "aboutChannelViewModel" in d:
-                    log("ABOUT OK", json.dumps(d["aboutChannelViewModel"])[:1500]); break
-            else:
-                log("sin about", json.dumps(r2)[:300])
-        except Exception as e: log("ERR", e)
-    for m in re.finditer(r'.{60}(subscribers|videos").{60}', h): log("HDR>>", m.group(0))
-    log("TN search", buscar_canal("TN Todo Noticias"))
+            vs = vivos_del_canal(cid); log("vivos", vs)
+            for v in vs[:3]: log("detalle", v["vid"], detalle_vivo(v["vid"]))
+        except Exception as e: log("vivos ERROR", e)
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "prueba":
