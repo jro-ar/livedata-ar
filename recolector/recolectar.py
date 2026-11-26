@@ -299,7 +299,14 @@ def asegurar_canales():
         p = pendientes.get(k)
         if p and time.time() - p < 6 * 3600:
             continue
-        cid = c.get("id") or (resolver_handle(c["handle"]) if c.get("handle") else None) or buscar_por_nombre(c["nombre"])
+        cid = c.get("id") or (resolver_handle(c["handle"]) if c.get("handle") else None)
+        if not cid:
+            cid = buscar_por_nombre(c["nombre"])
+            if cid:
+                try: pais = info_canal(cid).get("pais")
+                except Exception: pais = None
+                if pais and pais != "Argentina":
+                    log("descartado (es de", pais, "):", c["nombre"]); cid = None
         if not cid:
             pendientes[k] = time.time(); log("NO ENCONTRADO", c["nombre"]); continue
         pendientes.pop(k, None)
