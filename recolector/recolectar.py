@@ -249,40 +249,104 @@ def rss(cid):
     return out
 
 # ---------------------------------------------------------------- pasos
+def norm(t):
+    import unicodedata
+    t = unicodedata.normalize("NFKD", t or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]", "", t)
+
+def buscar_por_nombre(nombre):
+    """Encuentra el canal exacto por su nombre: primero entre los que estan en vivo, despues en canales."""
+    n = norm(nombre)
+    for params, clave in ((P_BUSCAR_VIVO, "videoRenderer"), (P_BUSCAR_CANAL, "channelRenderer")):
+        try:
+            r = yt("search", query=nombre, params=params)
+        except Exception:
+            continue
+        for d in recorrer(r):
+            x = d.get(clave)
+            if not x: continue
+            if clave == "channelRenderer":
+                if norm(texto(x.get("title"))) == n: return x.get("channelId")
+            else:
+                owner = x.get("ownerText") or x.get("longBylineText") or {}
+                if norm(texto(owner)) == n:
+                    for run in owner.get("runs", []):
+                        cid = run.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId")
+                        if cid: return cid
+    return None
+
+def cat_adivinada(nombre, titulo=""):
+    t = norm(nombre) + " " + (titulo or "").lower()
+    n = norm(nombre)
+    if re.search(r"radio|fm|am\d|\d{2,3}\.?\d", n): return "Radio"
+    if re.search(r"stream|podcast", n): return "Streaming"
+    if re.search(r"noticias|news|diario|tn|c5n", n): return "Noticias"
+    if re.search(r"tv|canal|television|telefe", n): return "Televisión"
+    if re.search(r"sport|deport|futbol|racing|boca|river|afa", n): return "Deportes"
+    return "Otros"
+
 def asegurar_canales():
     cfg = json.load(open(CANALES_CFG, encoding="utf-8"))
     canales = leer("canales.json", {})
-    por_handle = {c.get("cfg_handle"): cid for cid, c in canales.items()}
-    nuevos = 0
+    pendientes = leer("pendientes.json", {})
+    por_clave = {c.get("cfg_key"): cid for cid, c in canales.items() if c.get("cfg_key")}
+    claves = set()
     for c in cfg:
-        h = c["handle"]
-        if h in por_handle:
-            canales[por_handle[h]]["cat"] = c["cat"]
+        k = c.get("id") or c.get("handle") or c["nombre"]
+        claves.add(k)
+        if k in por_clave:
+            canales[por_clave[k]]["cat"] = c["cat"]; continue
+        p = pendientes.get(k)
+        if p and time.time() - p < 6 * 3600:
             continue
-        cid = c.get("id") or resolver_handle(h) or buscar_canal(c.get("busqueda") or h)
+        cid = c.get("id") or (resolver_handle(c["handle"]) if c.get("handle") else None) or buscar_por_nombre(c["nombre"])
         if not cid:
-            log("NO ENCONTRADO", h); continue
-        if cid in canales:
-            canales[cid]["cfg_handle"] = h; canales[cid]["cat"] = c["cat"]; continue
-        canales[cid] = {"id": cid, "cfg_handle": h, "cat": c["cat"], "nombre": c.get("busqueda") or h, "imagen": None}
-        nuevos += 1
-    # sacar los que ya no estan en la lista
-    hs = {c["handle"] for c in cfg}
-    canales = {k: v for k, v in canales.items() if v.get("cfg_handle") in hs}
-    if nuevos:
-        log("canales nuevos:", nuevos)
+            pendientes[k] = time.time(); log("NO ENCONTRADO", c["nombre"]); continue
+        pendientes.pop(k, None)
+        actual = canales.get(cid, {})
+        actual.update({"id": cid, "cfg_key": k, "cat": c["cat"], "auto": False})
+        actual.setdefault("nombre", c["nombre"]); actual.setdefault("imagen", None)
+        canales[cid] = actual
+        log("canal agregado:", c["nombre"], cid)
+    canales = {k: v for k, v in canales.items() if v.get("auto") or v.get("cfg_key") in claves}
+    escribir("pendientes.json", pendientes)
     return canales
 
-def actualizar_estadisticas(canales, hoy):
+def descubrir_y_sumar(canales):
+    """Cada hora: busca vivos argentinos nuevos y los suma solos si el canal es de Argentina."""
+    enc = descubrir_vivos()
+    rechazados = leer("rechazados.json", {})
+    nuevos = [e for e in enc.values() if e["id"] not in canales and e["viewers"] >= 30 and e["id"] not in rechazados]
+    nuevos.sort(key=lambda e: -e["viewers"])
+    def inf(e):
+        try: return e, info_canal(e["id"])
+        except Exception: return e, None
+    sumados = 0
+    with ThreadPoolExecutor(6) as ex:
+        for e, i in ex.map(inf, nuevos[:40]):
+            if not i: continue
+            if i.get("pais") == "Argentina":
+                canales[e["id"]] = {"id": e["id"], "auto": True, "cat": cat_adivinada(i.get("nombre") or e["nombre"], e["titulo"]),
+                                    "nombre": i.get("nombre") or e["nombre"], "imagen": i.get("imagen"), "handle": i.get("handle"),
+                                    "verificado": i.get("verificado")}
+                sumados += 1
+            else:
+                rechazados[e["id"]] = i.get("pais") or "-"
+    escribir("rechazados.json", rechazados)
+    log("descubrimiento:", len(enc), "vivos vistos,", sumados, "canales nuevos")
+
+def actualizar_estadisticas(canales, hoy, solo=None):
     """Una vez cada 6 horas: suscriptores, vistas, videos y ultimos videos."""
-    log("actualizando estadisticas de", len(canales), "canales")
+    ids = list(solo) if solo is not None else list(canales)
+    log("actualizando estadisticas de", len(ids), "canales")
     stats = leer(f"stats/{hoy}.json", {})
     def uno(cid):
         try: return cid, info_canal(cid)
         except Exception as e: return cid, None
     with ThreadPoolExecutor(8) as ex:
-        for cid, inf in ex.map(uno, list(canales)):
-            if not inf: continue
+        for cid, inf in ex.map(uno, ids):
+            if not inf:
+                stats.setdefault(cid, {}); continue
             c = canales[cid]
             for k in ("nombre", "imagen", "verificado", "handle"):
                 if inf.get(k) is not None: c[k] = inf[k]
@@ -294,7 +358,7 @@ def actualizar_estadisticas(canales, hoy):
         try: return rss(cid)
         except Exception: return []
     with ThreadPoolExecutor(8) as ex:
-        for lista in ex.map(uno_rss, list(canales)):
+        for lista in ex.map(uno_rss, ids):
             for v in lista:
                 ant = videos.get(v["vid"], {})
                 hist = ant.get("h", {})
@@ -492,17 +556,38 @@ def subir():
             log("subido"); return
         log("error al subir, reintento", r.stderr[-200:]); time.sleep(5)
 
+VERSION_DATOS = "2"
+
 def una_vuelta():
     os.makedirs(DATOS, exist_ok=True)
+    try: v = open(os.path.join(DATOS, "version.txt")).read().strip()
+    except Exception: v = ""
+    if v != VERSION_DATOS:
+        log("formato de datos nuevo: se empieza de cero")
+        for f in os.listdir(DATOS):
+            if f == ".git": continue
+            subprocess.run(["rm", "-rf", os.path.join(DATOS, f)])
+        open(os.path.join(DATOS, "version.txt"), "w").write(VERSION_DATOS)
     canales = asegurar_canales()
-    ahora = ahora_ar(); hoy = fecha(ahora)
-    ult = leer("ult_stats.json", {"t": 0})
-    if time.time() - ult["t"] > 6 * 3600 or not os.path.exists(os.path.join(DATOS, f"stats/{hoy}.json")):
+    ud = leer("ult_desc.json", {"t": 0})
+    if time.time() - ud["t"] > 3600:
         try:
-            actualizar_estadisticas(canales, hoy)
-            escribir("ult_stats.json", {"t": time.time()})
+            descubrir_y_sumar(canales)
+            escribir("ult_desc.json", {"t": time.time()})
         except Exception:
             traceback.print_exc()
+    ahora = ahora_ar(); hoy = fecha(ahora)
+    ult = leer("ult_stats.json", {"t": 0})
+    st_hoy = leer(f"stats/{hoy}.json", {})
+    faltan = [cid for cid in canales if cid not in st_hoy]
+    try:
+        if time.time() - ult["t"] > 6 * 3600 or not st_hoy:
+            actualizar_estadisticas(canales, hoy)
+            escribir("ult_stats.json", {"t": time.time()})
+        elif faltan:
+            actualizar_estadisticas(canales, hoy, solo=faltan[:30])
+    except Exception:
+        traceback.print_exc()
     vivos, errores = muestra(canales)
     guardar(canales, vivos, errores)
     subir()
