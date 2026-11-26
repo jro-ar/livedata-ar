@@ -1,0 +1,49 @@
+name: Recolector
+
+# Corre sin parar: cada tanda dura casi 6 horas y toma una muestra cada 10 minutos.
+# La de cada hora queda en espera y arranca apenas termina la anterior.
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      minutos:
+        description: "Minutos que corre (0 = una sola muestra)"
+        default: "345"
+
+concurrency:
+  group: recolector
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  recolectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bajar los datos guardados
+        run: |
+          git clone -q --depth 1 -b datos "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" datos || mkdir -p datos
+          ls datos | head -50
+
+      - name: Mantener activo el repositorio (GitHub apaga los relojes tras 60 dias sin cambios)
+        run: |
+          ultimo=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - ultimo )) -gt 3888000 ]; then
+            git config user.name livedata-bot
+            git config user.email livedata-bot@users.noreply.github.com
+            date -u > .vivo
+            git add .vivo && git commit -m "mantener activo" && git push || true
+          fi
+
+      - name: Recolectar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATOS_DIR: ${{ github.workspace }}/datos
+        run: python3 recolector/recolectar.py "${{ github.event.inputs.minutos || '345' }}"

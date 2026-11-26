@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1d23">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>LiveData AR - Panel</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icono.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilo.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <aside id="menu">
+    <a class="logo" href="#/dash"><span class="logo-i">▶</span> livedata<b>ar</b></a>
+    <nav>
+      <div class="grupo">Principal</div>
+      <a href="#/dash" data-r="dash"><i>▦</i>Dashboard</a>
+      <a href="#/explorar" data-r="explorar"><i>◎</i>Explorar</a>
+      <a href="#/favoritos" data-r="favoritos"><i>☆</i>Favoritos</a>
+      <a href="#/tendencias" data-r="tendencias"><i>↗</i>Tendencias</a>
+      <div class="grupo">En vivo</div>
+      <a href="#/en-vivo" data-r="en-vivo"><i>●</i>Canales en vivo</a>
+      <a href="#/pizarra" data-r="pizarra"><i>▤</i>Pizarra en vivo</a>
+      <a href="#/categorias" data-r="categorias"><i>▧</i>Categorías</a>
+      <a href="#/finalizados" data-r="finalizados"><i>■</i>Vivos finalizados</a>
+      <div class="grupo">Rankings</div>
+      <a href="#/vistas" data-r="vistas"><i>◉</i>Visualizaciones</a>
+      <a href="#/suscriptores" data-r="suscriptores"><i>♟</i>Suscriptores</a>
+      <a href="#/videos" data-r="videos"><i>▶</i>Nuevos videos</a>
+      <div class="grupo">Análisis</div>
+      <a href="#/contenido" data-r="contenido"><i>★</i>Contenido visto</a>
+      <a href="#/podios" data-r="podios"><i>♛</i>Podios globales</a>
+      <a href="#/comparar" data-r="comparar"><i>⇄</i>Comparar canales</a>
+    </nav>
+  </aside>
+  <div id="cuerpo">
+    <header id="barra">
+      <button id="btn-menu" aria-label="Menú">☰</button>
+      <div class="buscador">
+        <input id="buscar" type="search" placeholder="Buscar canales..." autocomplete="off">
+        <div id="resultados" class="oculto"></div>
+      </div>
+      <div id="actualizado"></div>
+    </header>
+    <main id="vista"><div class="cargando">Cargando…</div></main>
+  </div>
+</div>
+<div id="velo" class="oculto"></div>
+<script src="app.js"></script>
+</body>
+</html>
