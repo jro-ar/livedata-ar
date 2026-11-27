@@ -408,7 +408,7 @@ V.favoritos = async () => {
 /* ---------------- Tendencias */
 V.tendencias = async () => {
   const p = S.pais;
-  const [a, can, rec, vids, diasIdx] = await Promise.all([D.ahora(), D.canales(), D.records(), D.videos(), D.dias()]);
+  const [a, can, rec, vt, diasIdx] = await Promise.all([D.ahora(), D.canales(), D.records(), cargar(`videos_top/${p}.json`, 30), D.dias()]);
   if (!a || !can) return sinDatos();
   const lives = a.lives.filter(enPais(p));
   const hayHistoria = (diasIdx?.[p === "GL" ? "AR" : p] || []).length >= 3;
@@ -419,11 +419,8 @@ V.tendencias = async () => {
   const pcv = {}; lives.forEach((l) => (pcv[l.cid] = (pcv[l.cid] || 0) + l.viewers));
   const maximo = Object.entries(pcv).map(([cid, n]) => ({ cid, n, r: Math.max(n, rec?.[cid] || n), f: n / Math.max(n, rec?.[cid] || n) })).filter((x) => hayHistoria && x.f >= 0.5 && x.r >= 100).sort((x, y) => y.f - x.f).slice(0, 12);
   const durCanal = (cid) => { const l = lives.find((x) => x.cid === cid); return l ? dur(t - l.ini) : ""; };
-  const hace7 = hoyAR(7), desde7 = new Date(Date.now() - 7 * 86400e3).toISOString();
-  const ganancia = (v) => { const h = v.h || {}; const fs = Object.keys(h).sort(); const base = fs.filter((f) => f <= hace7).pop(); if ((v.publicado || "") >= desde7) return v.vistas || 0; return base ? (v.vistas || 0) - h[base] : null; };
-  const vlist = Object.values(vids || {}).filter((v) => p === "GL" || can[v.cid]?.pais === p).map((v) => ({ v, g: ganancia(v) })).filter((x) => x.g > 0);
-  const explot = vlist.filter((x) => !x.v.short).sort((x, y) => y.g - x.g).slice(0, 12);
-  const shorts = vlist.filter((x) => x.v.short).sort((x, y) => y.g - x.g).slice(0, 12);
+  const explot = (vt?.explotando || []).slice(0, 12).map((v) => ({ v, g: v.g7 }));
+  const shorts = (vt?.shorts || []).slice(0, 12).map((v) => ({ v, g: v.g7 }));
   const sec = (icono, titulo, sub, html) => `<div class="seccion-t"><div class="st"><span>${icono}</span>${titulo} ${ic("info", "info-i")}</div><div class="ss">${sub}</div><div class="fila-h">${html || '<div class="vacio" style="width:100%">Nada por ahora</div>'}</div></div>`;
   const cabC = (cid, d) => `<div class="cab-c">${av(can[cid], "av28")}<div style="min-width:0"><div class="nom">${nom(can[cid])}</div><div class="d">${d}</div></div></div>`;
   $("#vista").innerHTML = `<div class="cab"><h1>${ic("trend")} Tendencias</h1></div><div class="filtros"><span class="etq">País</span>${await selectorPais(true, true)}</div>
@@ -470,262 +467,368 @@ V["en-vivo"] = async () => {
   grafDona("gc", co.map((x) => x[0]), co.map((x) => x[1]), co.map((x) => COL_CAT[x[0]] || "#6b7280"), { leyenda: true, cutout: "55%" });
 };
 
-/* ---------------- Pizarra en vivo */
-let pzPrev = {}, pzSig = null, pzTimer = null;
+/* ---------------- Pizarra en vivo (varios vivos a la vez) */
+let pzTimer = null, pzAntes = {};
+const GRILLAS = { "1x2": [2, 1], "2x2": [2, 2], "2x3": [3, 2], "3x2": [2, 3], "3x3": [3, 3] };
+const GRILLA_TXT = { "1x2": "1 × 2", "2x2": "2 × 2", "2x3": "2 × 3", "3x2": "3 × 2", "3x3": "3 × 3" };
 V.pizarra = async () => {
-  const pintar = async () => {
-    if (!location.hash.startsWith("#/pizarra")) return;
-    const p = S.pais;
-    const [a, can] = await Promise.all([D.ahora(), D.canales()]);
-    if (!a) return sinDatos();
-    const filas = a.lives.filter(enPais(p)).slice(0, 48);
-    if (pzSig && pzSig._t !== a.t) pzPrev = pzSig;
-    $("#vista").innerHTML = `<div class="cab"><div><h1><span class="dot vivo"></span> Pizarra en vivo</h1><div class="sub">Se actualiza sola · ${miles(filas.reduce((s, l) => s + l.viewers, 0))} espectadores · ${horaDe(a.t)} hs</div></div>
-      <div class="der">${await selectorPais(true, true)}<button class="btn gris" id="pc">${ic("board")} Pantalla completa</button></div></div>
-      <div class="pizarra">${filas.map((l, i) => { const pr = pzPrev[l.vid]; const fl = !pr ? "" : pr.pos > i ? `<span class="delta sube" style="font-size:11px"> ▲${pr.pos - i}</span>` : pr.pos < i ? `<span class="delta baja" style="font-size:11px"> ▼${i - pr.pos}</span>` : ""; const dif = pr ? l.viewers - pr.v : 0;
-        return `<a class="pz ${pr && pr.pos !== i ? "cambio" : ""}" href="${ytv(l.vid)}" target="_blank" rel="noopener"><div class="th"><img src="${thumbLive(l.vid)}" onerror="this.onerror=null;this.src='${thumb(l.vid)}'" loading="lazy" alt=""><span class="rk">#${i + 1}${fl}</span><span class="badge-dur">${dur(a.t - l.ini)}</span></div>
-        <div class="cuerpo"><div class="linea-canal">${av(can?.[l.cid], "av18")}<span style="color:var(--t1);font-weight:700">${nom(can?.[l.cid])}</span></div><div class="num">${miles(l.viewers)} ${pr && dif ? `<span class="delta ${dif > 0 ? "sube" : "baja"}" style="font-size:12px">${dif > 0 ? "+" : ""}${miles(dif)}</span>` : ""}</div><div class="tit1" style="font-weight:500;color:var(--t2)">${esc(l.titulo)}</div></div></a>`; }).join("") || '<div class="vacio">Nadie en vivo ahora</div>'}</div>`;
-    alCambiarPais(() => { pzPrev = {}; pzSig = null; pintar(); });
-    $("#pc").onclick = () => document.documentElement.requestFullscreen?.();
-    if (pzPrev._t !== a.t) { const n = { _t: a.t }; filas.forEach((l, i) => (n[l.vid] = { pos: i, v: l.viewers })); pzSig = n; }
-  };
-  pzPrev = {}; pzSig = null;
-  await pintar();
-  clearInterval(pzTimer); pzTimer = setInterval(pintar, 60000);
-};
-
-/* ---------------- Categorías */
-V.categorias = async () => {
   const p = S.pais;
   const [a, can] = await Promise.all([D.ahora(), D.canales()]);
   if (!a || !can) return sinDatos();
-  const res = p === "GL" ? null : await D.resumen(p);
-  const hoy = res?.[hoyAR()] || {};
-  const dp = datosPais(a, p);
-  const cats = {};
-  Object.values(can).filter((c) => p === "GL" || c.pais === p).forEach((c) => (cats[c.cat] ||= { canales: [], viewers: 0, vivos: 0 }).canales.push(c));
-  Object.entries(dp.categorias || {}).forEach(([n, c]) => { (cats[n] ||= { canales: [], viewers: 0 }).viewers = c.viewers; cats[n].vivos = c.vivos; });
-  const orden = Object.entries(cats).filter(([, c]) => c.canales.length).sort((x, y) => y[1].viewers - x[1].viewers);
-  const pc = a.por_canal;
-  $("#vista").innerHTML = `<div class="cab"><h1>${ic("cats")} Categorías</h1><div class="der">${await selectorPais()}</div></div>
-  <div class="grid g2"><div class="tarjeta"><div class="tarjeta-cab"><h3>Reparto de espectadores ahora</h3></div><div class="lienzo l260"><canvas id="gcat"></canvas></div></div>
-  <div class="tarjeta"><div class="tarjeta-cab"><h3>Categorías en vivo</h3></div><div class="filas-cat">${orden.slice(0, 7).map(([n, c]) => `<div class="fila-cat"><span class="dot" style="background:${COL_CAT[n] || "#6b7280"}"></span><div><span class="nom">${esc(n)}</span><span class="v">${K(c.viewers)}<small>VIEWERS</small></span></div><span class="lider" style="max-width:none">${c.vivos || 0} vivos · ${c.canales.length} canales</span></div>`).join("")}</div></div></div>
-  ${orden.map(([n, c]) => `<div class="tarjeta mt" style="padding:6px 8px"><div class="tarjeta-cab" style="padding:10px 10px 0"><h3><span class="dot" style="background:${COL_CAT[n] || "#6b7280"}"></span>${esc(n)} <span class="sub">${K(c.viewers)} viewers ahora · ${c.canales.length} canales</span></h3></div>
-  ${tabla([{ t: "Canal", v: (x) => x.nombre, h: (x) => linkCanal(x) },
-    { t: "Ahora", n: 1, v: (x) => pc[x.id] || 0, h: (x) => (pc[x.id] ? `<span class="estado"><span class="dot vivo"></span><b class="rojo">${K(pc[x.id])}</b></span>` : '<span class="muted">—</span>') },
-    { t: "Pico hoy", n: 1, v: (x) => hoy[x.id]?.pico || 0, h: (x) => K(hoy[x.id]?.pico) },
-    { t: "Horas vistas hoy", n: 1, v: (x) => hoy[x.id]?.horas || 0, h: (x) => K(hoy[x.id]?.horas), cls: "ocultar-movil" }], c.canales, { orden: 1, limite: 30 })}</div>`).join("")}`;
+  let g = localStorage.getItem("vz_pz_g") || "2x2"; if (!GRILLAS[g]) g = "2x2";
+  const [cols, filas] = GRILLAS[g], n = cols * filas;
+  const lives = a.lives.filter(enPais(p));
+  const mejor = {}; lives.forEach((l) => { if (!mejor[l.cid] || l.viewers > mejor[l.cid].viewers) mejor[l.cid] = l; });
+  const orden = Object.values(mejor).sort((x, y) => y.viewers - x.viewers).map((l) => l.cid);
+  let sel = []; try { sel = JSON.parse(localStorage.getItem("vz_pz") || "[]"); } catch {}
+  sel = sel.filter((cid) => mejor[cid]);
+  for (const cid of orden) { if (sel.length >= n) break; if (!sel.includes(cid)) sel.push(cid); }
+  sel = sel.slice(0, n);
+  const guardar = () => { try { localStorage.setItem("vz_pz", JSON.stringify(sel)); } catch {} };
+  guardar();
+  const opciones = (actual) => orden.map((cid) => `<option value="${cid}" ${cid === actual ? "selected" : ""}>${nom(can[cid])} · ${K(mejor[cid].viewers)}</option>`).join("");
+  const cifra = (cid) => { const v = mejor[cid]?.viewers || 0, ant = pzAntes[cid]; const f = ant == null || ant === v ? "" : ant < v ? '<span class="sube">▲</span>' : '<span class="baja">▼</span>'; return `${f} <b class="rojo">${miles(v)}</b> <span class="dot vivo" style="width:6px;height:6px"></span>`; };
+  const tile = (cid, i) => `<div class="pz-tile" data-i="${i}"><div class="pz-cab"><span class="select pz-sel"><select data-i="${i}">${opciones(cid)}</select></span>
+      <button class="pz-fl" data-i="${i}" data-d="-1" title="Anterior">◀</button><button class="pz-fl" data-i="${i}" data-d="1" title="Siguiente">▶</button><span class="pz-v" data-cid="${cid}">${cifra(cid)}</span></div>
+      <div class="pz-video"><iframe src="https://www.youtube-nocookie.com/embed/${mejor[cid].vid}?autoplay=1&mute=1&playsinline=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe></div></div>`;
+  $("#vista").innerHTML = `<div class="cab"><h1>Pizarra en vivo</h1><div class="der">${await selectorPais(true, false)}<span class="select"><select id="pz-g">${Object.keys(GRILLAS).map((k) => `<option value="${k}" ${k === g ? "selected" : ""}>${GRILLA_TXT[k]}</option>`).join("")}</select></span><button class="btn gris" id="pz-nueva">Nueva ventana</button></div></div>
+    ${sel.length ? `<div class="pz-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${sel.map(tile).join("")}</div>` : '<div class="tarjeta vacio">Nadie en vivo ahora</div>'}`;
+  const cambiar = (i, cid) => {
+    sel[i] = cid; guardar();
+    const el = $(`.pz-tile[data-i="${i}"]`); if (el) el.outerHTML = tile(cid, i);
+    enlazar();
+  };
+  const enlazar = () => {
+    $$(".pz-sel select").forEach((s) => (s.onchange = () => cambiar(+s.dataset.i, s.value)));
+    $$(".pz-fl").forEach((b) => (b.onclick = () => { const i = +b.dataset.i; const pos = orden.indexOf(sel[i]); let k = pos; do { k = (k + +b.dataset.d + orden.length) % orden.length; } while (sel.includes(orden[k]) && orden.length > sel.length && k !== pos); cambiar(i, orden[k]); }));
+  };
+  enlazar();
+  $("#pz-g").onchange = (e) => { localStorage.setItem("vz_pz_g", e.target.value); ruta(); };
+  $("#pz-nueva").onclick = () => window.open(location.href, "_blank", "width=1280,height=760");
   alCambiarPais(ruta);
-  grafDona("gcat", orden.map((x) => x[0]), orden.map((x) => x[1].viewers), orden.map((x) => COL_CAT[x[0]] || "#6b7280"), { leyenda: true });
+  Object.entries(mejor).forEach(([cid, l]) => (pzAntes[cid] = l.viewers));
+  clearInterval(pzTimer);
+  pzTimer = setInterval(async () => {
+    if (!location.hash.startsWith("#/pizarra")) return clearInterval(pzTimer);
+    const a2 = await D.ahora(); if (!a2) return;
+    const m2 = {}; a2.lives.forEach((l) => { if (!m2[l.cid] || l.viewers > m2[l.cid].viewers) m2[l.cid] = l; });
+    $$(".pz-v").forEach((el) => { const cid = el.dataset.cid; if (m2[cid]) { mejor[cid].viewers = m2[cid].viewers; el.innerHTML = cifra(cid); pzAntes[cid] = m2[cid].viewers; } });
+  }, 60000);
 };
 
+/* ---------------- Categorías */
+function heatmapHTML(hm, sufijo = "prom.") {
+  const vals = Object.values(hm); const maxH = Math.max(1, ...vals);
+  let pico = null; Object.entries(hm).forEach(([k, v]) => { if (!pico || v > pico.v) pico = { k, v }; });
+  const color = (v) => { if (!v) return "rgba(255,255,255,.02)"; const x = v / maxH; const st = [[0, [30, 27, 46]], [0.45, [91, 33, 182]], [0.75, [192, 38, 211]], [1, [252, 32, 68]]]; let i = 1; while (i < st.length - 1 && x > st[i][0]) i++; const [a0, c0] = st[i - 1], [a1, c1] = st[i]; const f = Math.min(1, Math.max(0, (x - a0) / (a1 - a0))); return `rgb(${c0.map((c, j) => Math.round(c + (c1[j] - c) * f)).join(",")})`; };
+  const html = `<div class="heat">${[6, 5, 4, 3, 2, 1, 0].map((d) => `<div class="y">${DIAS[d]}</div>` + Array.from({ length: 24 }, (_, h) => { const v = hm[d + "-" + h]; return `<div title="${DIAS[d]} ${String(h).padStart(2, "0")}:00 · ${v ? miles(v) + " " + sufijo : "sin datos"}" style="background:${color(v)}"></div>`; }).join("")).join("")}
+    <div></div>${Array.from({ length: 24 }, (_, h) => `<div class="x">${h % 3 === 0 ? String(h).padStart(2, "0") + "h" : ""}</div>`).join("")}</div>`;
+  return { html, pico };
+}
+function catStats(a, can, p) {
+  const cats = {};
+  a.lives.filter(enPais(p)).forEach((l) => {
+    const c = can[l.cid]?.cat || "Otros / Especializados";
+    const o = (cats[c] ||= { viewers: 0, vivos: 0, canales: new Set(), lider: null, ayer: 0 });
+    o.viewers += l.viewers; o.vivos++; o.canales.add(l.cid);
+    if (!o.lider || l.viewers > o.lider.viewers) o.lider = l;
+  });
+  Object.entries(a.por_canal_ayer || {}).forEach(([cid, n]) => { const c = can[cid]; if (!c || (p !== "GL" && c.pais !== p)) return; if (cats[c.cat]) cats[c.cat].ayer += n; });
+  return cats;
+}
+V.categorias = async (arg) => (arg ? catDetalle(decodeURIComponent(arg)) : catLista());
+async function catLista() {
+  const p = S.pais;
+  const [a, can] = await Promise.all([D.ahora(), D.canales()]);
+  if (!a || !can) return sinDatos();
+  const cats = Object.entries(catStats(a, can, p)).sort((x, y) => y[1].viewers - x[1].viewers);
+  $("#vista").innerHTML = `<div class="cab"><div><h1>${ic("cats")} Categorías en vivo</h1><div class="sub">Explorá los canales en vivo agrupados por categoría · <a href="#/dash" class="rojo">Ver resumen de ${esc(await nombrePais(p))}</a></div></div><div class="der">${await selectorPais()}</div></div>
+  <div class="grid-cats">${cats.map(([n, c]) => `<a class="cat-card" href="#/categorias/${encodeURIComponent(n)}" style="--c:${COL_CAT[n] || "#6b7280"}"><div class="cat-nom">${esc(n)}</div>
+    <div class="cat-l2"><span class="rojo">• ${c.vivos} en vivo</span> <b>${K(c.viewers)} viewers</b></div>${c.ayer ? delta(pct(c.viewers, c.ayer)) : '<span class="delta muted">sin datos de ayer</span>'}
+    <div class="cat-lider">${av(can[c.lider.cid], "av28")}<div style="min-width:0"><div class="nom">${nom(can[c.lider.cid])}</div><div class="tt">${esc(c.lider.titulo)}</div></div></div></a>`).join("") || '<div class="tarjeta vacio">Nadie en vivo ahora</div>'}</div>`;
+  alCambiarPais(ruta);
+}
+async function catDetalle(cat) {
+  const p = S.pais;
+  const [a, can] = await Promise.all([D.ahora(), D.canales()]);
+  if (!a || !can) return sinDatos();
+  const c = catStats(a, can, p)[cat] || { viewers: 0, vivos: 0, canales: new Set(), lider: null, ayer: 0 };
+  const lives = a.lives.filter(enPais(p)).filter((l) => (can[l.cid]?.cat || "Otros / Especializados") === cat);
+  const pc = {}; lives.forEach((l) => (pc[l.cid] = (pc[l.cid] || 0) + l.viewers));
+  const top5 = Object.entries(pc).sort((x, y) => y[1] - x[1]).slice(0, 5).map((x) => x[0]);
+  const pHeat = p === "GL" ? Object.keys((await D.dias()) || {}) : [p];
+  const hm = {}; (await Promise.all(pHeat.map((x) => cargar(`heatmap_cat/${x}.json`, 30)))).filter(Boolean).forEach((h) => (h[cat] || []).forEach((x) => (hm[x.dia + "-" + x.hora] = (hm[x.dia + "-" + x.hora] || 0) + x.prom)));
+  const { html, pico } = heatmapHTML(hm);
+  const L = c.lider;
+  $("#vista").innerHTML = `<a href="#/categorias" class="sub" style="display:inline-flex;align-items:center;gap:4px">${ic("back")} Categorías</a>
+  <div class="cab" style="margin-top:6px"><h1>${esc(cat)}</h1><div class="der">${await selectorPais()}</div></div>
+  <div class="grid g3">
+    <div class="tarjeta kpi"><div class="ico">${ic("users")}</div><div><div class="num">${K(c.viewers)}</div><div class="lbl">Espectadores ahora</div>${c.ayer ? delta(pct(c.viewers, c.ayer)) : '<span class="delta muted">sin datos de ayer</span>'}</div></div>
+    <div class="tarjeta kpi"><div class="ico">${ic("radio")}</div><div><div class="num">${c.vivos}</div><div class="lbl">Transmisiones en vivo</div></div></div>
+    <div class="tarjeta" style="display:flex;flex-direction:column;justify-content:center"><div class="sub" style="font-size:11px">Canal más visto ahora</div>${L ? `<div style="display:flex;align-items:center;gap:10px;margin-top:6px">${av(can[L.cid], "av36")}<div style="min-width:0;flex:1"><b>${nom(can[L.cid])}</b><div class="tit1" style="font-weight:500;color:var(--t2)">${esc(L.titulo)}</div></div><a class="rojo" style="font-weight:700;white-space:nowrap" href="${ytv(L.vid)}" target="_blank" rel="noopener">Ver vivo</a></div>` : '<div class="muted">—</div>'}</div>
+  </div>
+  <div class="tarjeta mt"><div class="tarjeta-cab"><div><h3>Últimas 12 horas</h3><div class="h3sub">Top 5 canales · ${esc(cat)} · ${esc(await nombrePais(p))}</div></div><div class="der">${bandera(p, "f18")}</div></div><div class="lienzo"><div class="marca-agua">vivos<span style="color:var(--primary)">AR</span></div><canvas id="gcat12"></canvas></div></div>
+  <div class="grid g-dash mt">
+    <div class="tarjeta"><div class="tarjeta-cab"><div><h3>Actividad semanal</h3><div class="h3sub">Promedio de viewers por día y hora · últimos 14 días · horario Argentina (GMT−3)</div></div></div>${html}
+      <div class="pill-pico">Pico habitual: <b>${pico ? DIAS[+pico.k.split("-")[0]] + " " + pico.k.split("-")[1] + "h · " + K(pico.v) + " prom." : "—"}</b></div></div>
+    <div class="tarjeta"><div class="tarjeta-cab"><h3>En vivo ahora</h3></div><div class="lista-vivos" style="max-height:340px">${lives.slice(0, 40).map((l, i) => itemVivo(l, i, can)).join("") || '<div class="vacio">Nadie en vivo</div>'}</div></div>
+  </div>`;
+  alCambiarPais(ruta);
+  const { tiempos, por } = await seriesRecientes(p, 12, top5);
+  grafLineas("gcat12", tiempos.map(horaDe), top5.map((cid, i) => ({ nombre: can[cid]?.nombre, datos: tiempos.map((t) => por[cid]?.[t] ?? null), color: COL[i] })), { maxTicks: 13 });
+}
+
 /* ---------------- Vivos finalizados */
+function haceTxt(min) { if (min < 60) return `hace ${Math.max(1, Math.round(min))} min`; if (min < 1440) return `hace ${Math.floor(min / 60)} h`; return `hace ${Math.floor(min / 1440)} d`; }
 V.finalizados = async () => {
   const p = S.pais;
-  const [fin, can] = await Promise.all([D.fin(), D.canales()]);
+  const [fin, can, a] = await Promise.all([D.fin(), D.canales(), D.ahora()]);
   if (!fin || !can) return sinDatos();
-  const opts = Object.values(can).filter((c) => p === "GL" || c.pais === p).sort((x, y) => (x.nombre || "").localeCompare(y.nombre || ""));
-  $("#vista").innerHTML = `<div class="cab"><div><h1>${ic("tv")} Vivos finalizados</h1><div class="sub">Transmisiones que ya terminaron, con su pico, promedio y duración</div></div><div class="der">${await selectorPais()}</div></div>
-  <div class="filtros"><div class="pestanas" id="per">${[["1", "Hoy"], ["2", "Ayer"], ["7", "7 días"], ["30", "30 días"]].map(([v, tx], i) => `<button data-v="${v}" class="${i === 2 ? "activo" : ""}">${tx}</button>`).join("")}</div>
-  <span class="select"><select id="f-can"><option value="">Todos los canales</option>${opts.map((c) => `<option value="${c.id}">${nom(c)}</option>`).join("")}</select></span><input id="f-txt" placeholder="Buscar en el título"></div><div class="tarjeta" id="t-fin" style="padding:6px 8px"></div>`;
-  let per = 7;
-  const pintar = () => {
-    const cc = $("#f-can").value, txt = $("#f-txt").value.toLowerCase();
-    const inicioHoy = Math.floor((Date.now() - 3 * 3600e3) / 86400e3) * 1440 + 180, at = tAhora();
-    const ok = (f) => (per === 1 ? f.fin >= inicioHoy : per === 2 ? f.fin >= inicioHoy - 1440 && f.fin < inicioHoy : f.fin >= at - per * 1440) && (p === "GL" || can[f.cid]?.pais === p) && (!cc || f.cid === cc) && (!txt || (f.titulo || "").toLowerCase().includes(txt));
-    $("#t-fin").innerHTML = tabla([
-      { t: "Vivo", v: (f) => f.titulo, h: (f) => `<a href="${ytv(f.vid)}" target="_blank" rel="noopener" style="display:flex;gap:10px;align-items:center"><span class="mini ocultar-movil"><img src="${thumb(f.vid)}" loading="lazy" alt=""><span class="badge-dur">${dur(f.dur)}</span></span><div style="min-width:0"><div class="tit2">${esc(f.titulo)}</div><div class="linea-canal" style="margin-top:3px">${av(can[f.cid], "av18")}<span>${nom(can[f.cid])} · ${fechaHora(f.ini)} a ${horaDe(f.fin)}</span></div></div></a>` },
-      { t: "Pico", n: 1, v: (f) => f.pico, h: (f) => `<b class="rojo">${K(f.pico)}</b><div class="sub">${horaDe(f.pico_t)}</div>` },
-      { t: "Promedio", n: 1, v: (f) => f.prom, h: (f) => K(f.prom) },
-      { t: "Duración", n: 1, v: (f) => f.dur, h: (f) => dur(f.dur), cls: "ocultar-movil" },
-      { t: "Me gusta", n: 1, v: (f) => f.mg, h: (f) => K(f.mg), cls: "ocultar-movil" },
-    ], fin.filter(ok), { orden: 1, limite: 500, vacio: "No hay vivos finalizados en este período" });
-  };
-  $("#per").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; per = +b.dataset.v; $$("#per button").forEach((x) => x.classList.toggle("activo", x === b)); pintar(); };
-  $("#f-can").onchange = pintar; $("#f-txt").oninput = pintar;
+  const res = p === "GL" ? null : await D.resumen(p);
+  const cat = sessionStorage.getItem("vz_fcat") || "";
+  const lista = fin.filter((f) => (p === "GL" || can[f.cid]?.pais === p) && (!cat || can[f.cid]?.cat === cat)).slice(0, 200);
+  const hoyR = res?.[hoyAR()] || {};
+  const titulos = {}; [...(a?.lives || []), ...fin].forEach((x) => { if (!titulos[x.cid]) titulos[x.cid] = x.titulo; });
+  const hoyLista = Object.entries(hoyR).filter(([cid]) => can[cid] && (!cat || can[cid].cat === cat)).sort((x, y) => y[1].pico - x[1].pico);
+  const todasCats = [...new Set(Object.values(can).map((c) => c.cat))].sort();
+  const at = tAhora();
+  $("#vista").innerHTML = `<div class="layout-vivo"><div style="min-width:0">
+    <div class="cab"><div><h1>${ic("tv")} Vivos finalizados</h1><div class="sub">${lista.length} vivos finalizados</div></div>
+      <div class="der"><span class="etq">País</span>${await selectorPais(false, true)}<span class="etq">Categoría</span><span class="select"><select id="f-cat"><option value="">Todas</option>${todasCats.map((c) => `<option ${c === cat ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></span></div></div>
+    <div class="grid-fin">${lista.map((f) => `<a class="fin-card" href="${ytv(f.vid)}" target="_blank" rel="noopener"><div class="th"><img src="${thumb(f.vid)}" loading="lazy" alt=""><span class="badge-dur">${dur(f.dur)}</span></div>
+      <div class="cuerpo"><div class="linea-canal">${av(can[f.cid], "av18")}<span>${nom(can[f.cid])}</span></div><div class="tit2" style="margin:4px 0 8px">${esc(f.titulo)}</div>
+      <div class="pie-fin"><div><div class="mini-lbl">TERMINÓ CON</div><b class="rojo">${miles(f.ultv ?? f.prom)}</b></div><span class="muted">${haceTxt(at - f.fin)}</span></div></div></a>`).join("") || '<div class="tarjeta vacio" style="grid-column:1/-1">Todavía no terminó ningún vivo con estos filtros</div>'}</div>
+  </div>
+  <div class="tarjeta lateral"><div class="tarjeta-cab"><h3>Canales que transmitieron hoy</h3><span class="der chip">${hoyLista.length}</span></div>
+    <div class="lista-vivos" style="gap:0">${hoyLista.map(([cid, r]) => `<a class="vl" href="#/canal/${cid}">${av(can[cid], "av36")}<div style="min-width:0"><b style="font-size:13px">${nom(can[cid])}</b><div class="tit2" style="font-weight:500;color:var(--t2);font-size:12px">${esc(titulos[cid] || "")}</div><div style="margin-top:3px;font-size:12px"><b class="rojo">pico ${K(r.pico)}</b> <span class="muted">prom ${K(r.prom)}</span></div></div></a>`).join("") || '<div class="vacio">—</div>'}</div></div></div>`;
   alCambiarPais(ruta);
-  pintar();
+  $("#f-cat").onchange = (e) => { sessionStorage.setItem("vz_fcat", e.target.value); ruta(); };
 };
 
 /* ---------------- Informes */
 function varCelda(n) { return n == null ? '<span class="muted">—</span>' : `<span class="delta ${n > 0 ? "sube" : n < 0 ? "baja" : "muted"}">${n > 0 ? "+" : ""}${miles(n)}</span>`; }
-async function informe(campo, titulo, icono, unidad) {
+async function informe(campo, titulo, icono) {
   const p = S.pais;
-  const [can, s0, s1, s7, s30] = await Promise.all([D.canales(), statsEn(0), statsEn(1), statsEn(7), statsEn(30)]);
+  const per = +(sessionStorage.getItem("vz_iper") || 7), cat = sessionStorage.getItem("vz_icat") || "";
+  const [can, s0, sA, sB] = await Promise.all([D.canales(), statsEn(0), statsEn(per), statsEn(per * 2)]);
   if (!can || !s0.fecha) return sinDatos("Las estadísticas de los canales se actualizan cada 6 horas.");
-  const filas = Object.values(can).filter((c) => p === "GL" || c.pais === p).map((c) => {
-    const v = (s) => s.datos?.[c.id]?.[campo]; const a0 = v(s0);
-    const d = (s) => (a0 != null && v(s) != null && s.fecha !== s0.fecha ? a0 - v(s) : null);
-    return { c, a: a0, d1: d(s1), d7: d(s7), d30: d(s30) };
-  }).filter((f) => f.a != null);
-  const top = filas.filter((f) => f.d7 > 0).sort((x, y) => y.d7 - x.d7).slice(0, 10);
-  $("#vista").innerHTML = `<div class="cab"><div><h1>${ic(icono)} ${titulo}</h1><div class="sub">Datos al ${s0.fecha}${s7.fecha !== s0.fecha ? ` · comparado con ${s7.fecha}` : " · las variaciones aparecen a partir del segundo día"}</div></div><div class="der">${await selectorPais()}</div></div>
-  ${top.length ? `<div class="tarjeta" style="margin-bottom:14px"><div class="tarjeta-cab"><h3>Mayor suba en 7 días</h3></div><div class="lienzo l260"><canvas id="ginf"></canvas></div></div>` : ""}
+  const v = (s, cid) => s.datos?.[cid]?.[campo];
+  const filas = Object.values(can).filter((c) => (p === "GL" || c.pais === p) && (!cat || c.cat === cat)).map((c) => {
+    const g = sA.fecha !== s0.fecha && v(s0, c.id) != null && v(sA, c.id) != null ? v(s0, c.id) - v(sA, c.id) : null;
+    const gp = sB.fecha !== sA.fecha && v(sA, c.id) != null && v(sB, c.id) != null ? v(sA, c.id) - v(sB, c.id) : null;
+    return { c, g, var: g != null && gp ? Math.round(((g - gp) * 100) / Math.abs(gp)) : null };
+  }).filter((f) => f.g != null);
+  const todasCats = [...new Set(Object.values(can).map((c) => c.cat))].sort();
+  $("#vista").innerHTML = `<div class="cab"><h1>${ic(icono)} ${titulo}</h1></div>
+  <div class="filtros"><span class="etq">País:</span>${await selectorPais(false, true)}<span class="etq">Categoría:</span><span class="select"><select id="i-cat"><option value="">Todas</option>${todasCats.map((x) => `<option ${x === cat ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></span>
+  <span class="etq">Período:</span><span class="select"><select id="i-per">${[7, 14, 30, 60, 90].map((d) => `<option value="${d}" ${d === per ? "selected" : ""}>Últimos ${d} días</option>`).join("")}</select></span></div>
+  ${filas.length ? "" : `<div class="tarjeta vacio" style="margin-bottom:14px">Para este período todavía no hay historial suficiente (los datos empezaron el ${(await D.statsIdx())?.[0] || "—"}). Se completa solo con los días.</div>`}
   <div class="tarjeta" style="padding:6px 8px">${tabla([
     { t: "#", h: (f, i) => `<span class="muted">${i + 1}</span>` },
-    { t: "Canal", v: (f) => f.c.nombre, h: (f) => linkCanal(f.c) },
-    { t: unidad, n: 1, v: (f) => f.a, h: (f) => `<b>${miles(f.a)}</b>` },
-    { t: "24 h", n: 1, v: (f) => f.d1, h: (f) => varCelda(f.d1) },
-    { t: "7 días", n: 1, v: (f) => f.d7, h: (f) => varCelda(f.d7) },
-    { t: "30 días", n: 1, v: (f) => f.d30, h: (f) => varCelda(f.d30), cls: "ocultar-movil" },
-  ], filas, { orden: top.length ? 4 : 2 })}</div>`;
+    { t: "Canal", v: (f) => f.c.nombre, h: (f) => `<a class="celda-canal" href="#/canal/${f.c.id}">${av(f.c, "av28")}<div style="min-width:0"><span style="display:block">${nom(f.c)}</span><span class="sub" style="font-weight:400">${esc(f.c.cat)}</span></div></a>` },
+    { t: "Total", n: 1, v: (f) => f.g, h: (f) => `<b>${campo === "videos" ? miles(f.g) : K(f.g)}</b>` },
+    { t: "Variación", n: 1, v: (f) => f.var, h: (f) => (f.var == null ? '<span class="muted">—</span>' : `<span class="delta ${f.var >= 0 ? "sube" : "baja"}" title="Comparado con los ${per} días anteriores">${f.var >= 0 ? "+" : ""}${f.var}% ℹ</span>`) },
+  ], filas, { orden: 2, limite: 300 })}</div>`;
   alCambiarPais(ruta);
-  if (top.length) grafBarras("ginf", top.map((f) => f.c.nombre), top.map((f) => f.d7), { horizontal: true, color: "#fc2044" });
+  $("#i-cat").onchange = (e) => { sessionStorage.setItem("vz_icat", e.target.value); ruta(); };
+  $("#i-per").onchange = (e) => { sessionStorage.setItem("vz_iper", e.target.value); ruta(); };
 }
-V.vistas = () => informe("vistas", "Visualizaciones", "eye", "Total");
-V.suscriptores = () => informe("subs", "Suscriptores", "userplus", "Suscriptores");
-V.videos = async () => {
-  await informe("videos", "Nuevos videos", "video", "Videos");
-  const p = S.pais;
-  const [vids, can] = await Promise.all([D.videos(), D.canales()]);
-  if (!vids || !can || !$("#vista .tabla-wrap")) return;
-  const desde = new Date(Date.now() - 2 * 86400e3).toISOString();
-  const nuevos = Object.values(vids).filter((v) => (v.publicado || "") >= desde && (p === "GL" || can[v.cid]?.pais === p)).sort((x, y) => (y.publicado || "").localeCompare(x.publicado || ""));
-  $("#vista").insertAdjacentHTML("beforeend", `<div class="tarjeta mt" style="padding:6px 8px"><div class="tarjeta-cab" style="padding:10px 10px 0"><h3>Publicados en las últimas 48 horas <span class="sub">${nuevos.length} videos</span></h3></div>${tabla([
-    { t: "Video", v: (v) => v.titulo, h: (v) => `<a href="${v.short ? "https://www.youtube.com/shorts/" + v.vid : ytv(v.vid)}" target="_blank" rel="noopener" style="display:flex;gap:10px;align-items:center"><span class="mini ocultar-movil"><img src="${thumb(v.vid)}" loading="lazy" alt="">${v.short ? '<span class="badge-dur">SHORT</span>' : ""}</span><div style="min-width:0"><div class="tit2">${esc(v.titulo)}</div><div class="linea-canal" style="margin-top:3px">${av(can[v.cid], "av18")}<span>${nom(can[v.cid])}</span></div></div></a>` },
-    { t: "Publicado", v: (v) => v.publicado, h: (v) => `<span class="sub">${new Date(v.publicado).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>` },
-    { t: "Vistas", n: 1, v: (v) => v.vistas, h: (v) => `<b>${K(v.vistas)}</b>` }], nuevos, { limite: 300 })}</div>`);
-};
+V.vistas = () => informe("vistas", "Vistas ganadas", "eye");
+V.suscriptores = () => informe("subs", "Suscriptores ganados", "userplus");
+V.videos = () => informe("videos", "Videos nuevos", "video");
 
 /* ---------------- Contenido visto */
+function tarjetaVideo(x, can, extra = "") {
+  const url = x.short ? `https://www.youtube.com/shorts/${x.vid}` : ytv(x.vid);
+  return `<a class="vid-c ${x.short ? "short" : ""}" style="width:auto" href="${url}" target="_blank" rel="noopener"><div class="th"><img src="${x.short ? `https://i.ytimg.com/vi/${x.vid}/oar2.jpg` : thumb(x.vid)}" onerror="this.onerror=null;this.src='${thumb(x.vid)}'" loading="lazy" alt=""></div>
+    <div class="cuerpo">${extra}<div class="tit3">${esc(x.titulo)}</div><div class="linea-canal" style="margin-top:6px">${av(can[x.cid], "av18")}<span>${nom(can[x.cid])}</span></div><div class="sub" style="margin-top:4px">${K(x.vistas)} vistas · ${(x.publicado || "").slice(0, 10)}</div></div></a>`;
+}
 V.contenido = async () => {
   const p = S.pais;
-  const [vids, can] = await Promise.all([D.videos(), D.canales()]);
-  if (!vids || !can) return sinDatos();
-  $("#vista").innerHTML = `<div class="cab"><div><h1>${ic("film")} Contenido visto</h1><div class="sub">Los videos y shorts más vistos de los canales seguidos</div></div><div class="der">${await selectorPais()}</div></div>
-  <div class="filtros"><div class="pestanas" id="per">${[["1", "24 horas"], ["7", "7 días"], ["30", "30 días"]].map(([v, tx], i) => `<button data-v="${v}" class="${i === 1 ? "activo" : ""}">${tx}</button>`).join("")}</div>
-  <div class="pestanas" id="tipo"><button data-v="" class="activo">Todo</button><button data-v="v">Videos</button><button data-v="s">Shorts</button></div>
-  <span class="select"><select id="f-cat"><option value="">Todas las categorías</option>${[...new Set(Object.values(can).map((c) => c.cat))].sort().map((c) => `<option>${esc(c)}</option>`).join("")}</select></span></div><div class="tarjeta" id="t-cont" style="padding:6px 8px"></div>`;
-  let per = 7, tipo = "";
+  const [vt, can] = await Promise.all([cargar(`videos_top/${p}.json`, 30), D.canales()]);
+  if (!can) return sinDatos();
+  let tipo = sessionStorage.getItem("vz_ctipo") || "v", per = sessionStorage.getItem("vz_cper") || "d7";
+  $("#vista").innerHTML = `<div class="cab"><div><h1>${ic("film")} Contenido visto</h1><div class="sub">Videos y shorts ordenados por actividad</div></div><div class="der">${await selectorPais(false, true)}</div></div>
+  <div class="filtros"><div class="pestanas" id="tipo"><button data-v="v">Videos</button><button data-v="s">Shorts</button></div><div class="pestanas" id="per"><button data-v="d1">24 horas</button><button data-v="d7">7 días</button><button data-v="d30">30 días</button></div></div><div id="cont"></div>`;
   const pintar = () => {
-    const cat = $("#f-cat").value, desde = new Date(Date.now() - per * 86400e3).toISOString();
-    const lista = Object.values(vids).filter((v) => (v.publicado || "") >= desde && (p === "GL" || can[v.cid]?.pais === p) && (!cat || can[v.cid]?.cat === cat) && (!tipo || (tipo === "s") === !!v.short));
-    $("#t-cont").innerHTML = tabla([
-      { t: "#", h: (v, i) => `<span class="muted">${i + 1}</span>` },
-      { t: "Video", v: (v) => v.titulo, h: (v) => `<a href="${v.short ? "https://www.youtube.com/shorts/" + v.vid : ytv(v.vid)}" target="_blank" rel="noopener" style="display:flex;gap:10px;align-items:center"><span class="mini"><img src="${thumb(v.vid)}" loading="lazy" alt="">${v.short ? '<span class="badge-dur">SHORT</span>' : ""}</span><div style="min-width:0"><div class="tit2">${esc(v.titulo)}</div><div class="linea-canal" style="margin-top:3px">${av(can[v.cid], "av18")}<span>${nom(can[v.cid])} · ${(v.publicado || "").slice(0, 10)}</span></div></div></a>` },
-      { t: "Vistas", n: 1, v: (v) => v.vistas, h: (v) => `<b>${K(v.vistas)}</b>` },
-      { t: "Por día", n: 1, v: (v) => v.vistas / Math.max(1, (Date.now() - new Date(v.publicado)) / 86400e3), h: (v) => K(v.vistas / Math.max(1, (Date.now() - new Date(v.publicado)) / 86400e3)), cls: "ocultar-movil" },
-    ], lista, { orden: 2, limite: 200 });
+    $$("#tipo button").forEach((b) => b.classList.toggle("activo", b.dataset.v === tipo)); $$("#per button").forEach((b) => b.classList.toggle("activo", b.dataset.v === per));
+    const lista = (vt?.[per] || []).filter((x) => (tipo === "s") === !!x.short);
+    $("#cont").innerHTML = lista.length ? `<div class="${tipo === "s" ? "grid-shorts" : "grid-videos"}">${lista.map((x) => tarjetaVideo(x, can)).join("")}</div>` : '<div class="tarjeta vacio">No se encontró contenido con los filtros seleccionados.</div>';
   };
-  const pest = (sel, set) => ($(sel).onclick = (e) => { const b = e.target.closest("button"); if (!b) return; set(b.dataset.v); $$(sel + " button").forEach((x) => x.classList.toggle("activo", x === b)); pintar(); });
-  pest("#per", (v) => (per = +v)); pest("#tipo", (v) => (tipo = v));
-  $("#f-cat").onchange = pintar; alCambiarPais(ruta);
+  $("#tipo").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; tipo = b.dataset.v; sessionStorage.setItem("vz_ctipo", tipo); pintar(); };
+  $("#per").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; per = b.dataset.v; sessionStorage.setItem("vz_cper", per); pintar(); };
+  alCambiarPais(ruta);
   pintar();
 };
 
-/* ---------------- Podios */
+/* ---------------- Podios globales */
 V.podios = async () => {
   const p = S.pais;
-  const ps = p === "GL" ? Object.keys((await D.dias()) || {}) : [p];
-  const [can, fin, ...resList] = await Promise.all([D.canales(), D.fin(), ...ps.map((x) => D.resumen(x))]);
+  const [po, can] = await Promise.all([cargar(`podios/${p}.json`, 30), D.canales()]);
   if (!can) return sinDatos();
-  const res = {}; resList.filter(Boolean).forEach((r) => Object.entries(r).forEach(([f, d]) => Object.assign((res[f] ||= {}), d)));
-  const fechas = Object.keys(res).sort();
-  const periodos = { hoy: [hoyAR()], ayer: [hoyAR(1)], semana: fechas.slice(-7), mes: fechas.slice(-30) };
-  $("#vista").innerHTML = `<div class="cab"><h1>${ic("podium")} Podios globales</h1><div class="der">${await selectorPais()}</div></div>
-  <div class="filtros"><div class="pestanas" id="per">${[["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "7 días"], ["mes", "30 días"]].map(([v, tx], i) => `<button data-v="${v}" class="${i === 0 ? "activo" : ""}">${tx}</button>`).join("")}</div>
-  <div class="pestanas" id="crit"><button data-v="pico" class="activo">Por pico</button><button data-v="horas">Por horas vistas</button><button data-v="prom">Por promedio</button></div></div><div id="pod"></div>`;
-  let per = "hoy", crit = "pico";
-  const pintar = () => {
-    const agg = {};
-    periodos[per].filter((f) => res[f]).forEach((f) => Object.entries(res[f]).forEach(([cid, r]) => { const x = (agg[cid] ||= { cid, pico: 0, horas: 0, min: 0, s: 0 }); x.pico = Math.max(x.pico, r.pico); x.horas += r.horas; x.min += r.min; x.s += r.prom * r.min; }));
-    const lista = Object.values(agg).filter((x) => can[x.cid]).map((x) => ({ ...x, prom: x.min ? Math.round(x.s / x.min) : 0 })).sort((x, y) => y[crit] - x[crit]);
-    const escl = (x, n) => (x ? `<a class="escalon p${n}" href="#/canal/${x.cid}">${av(can[x.cid], "av56")}<div class="nom">${nom(can[x.cid])}</div><b class="rojo">${K(x[crit])}</b><div class="base">${n}</div></a>` : "");
-    const lim = { hoy: 1, ayer: 2, semana: 7, mes: 30 }[per];
-    const inicioHoy = Math.floor((Date.now() - 3 * 3600e3) / 86400e3) * 1440 + 180, at = tAhora();
-    const vt = (fin || []).filter((f) => (p === "GL" || can[f.cid]?.pais === p) && (per === "hoy" ? f.fin >= inicioHoy : per === "ayer" ? f.fin >= inicioHoy - 1440 && f.fin < inicioHoy : f.fin >= at - lim * 1440)).sort((x, y) => y.pico - x.pico).slice(0, 10);
-    $("#pod").innerHTML = lista.length ? `<div class="tarjeta"><div class="podio">${escl(lista[1], 2)}${escl(lista[0], 1)}${escl(lista[2], 3)}</div>
-      ${tabla([{ t: "#", h: (x, i) => `<span class="muted">${i + 1}</span>` }, { t: "Canal", v: (x) => can[x.cid]?.nombre, h: (x) => linkCanal(can[x.cid]) },
-        { t: "Pico", n: 1, v: (x) => x.pico, h: (x) => K(x.pico) }, { t: "Promedio", n: 1, v: (x) => x.prom, h: (x) => K(x.prom) },
-        { t: "Horas vistas", n: 1, v: (x) => x.horas, h: (x) => K(x.horas) }, { t: "Al aire", n: 1, v: (x) => x.min, h: (x) => dur(x.min), cls: "ocultar-movil" }], lista, { limite: 30 })}</div>
-      <div class="tarjeta mt" style="padding:6px 8px"><div class="tarjeta-cab" style="padding:10px 10px 0"><h3>Vivos con más audiencia</h3></div>${tabla([{ t: "Vivo", v: (f) => f.titulo, h: (f) => `<a href="${ytv(f.vid)}" target="_blank" rel="noopener"><div class="tit2">${esc(f.titulo)}</div><div class="linea-canal">${av(can[f.cid], "av18")}<span>${nom(can[f.cid])} · ${fechaHora(f.ini)}</span></div></a>` },
-        { t: "Pico", n: 1, v: (f) => f.pico, h: (f) => `<b class="rojo">${K(f.pico)}</b>` }, { t: "Promedio", n: 1, v: (f) => f.prom, h: (f) => K(f.prom) }], vt)}</div>` : '<div class="tarjeta vacio">Todavía no hay datos para este período</div>';
-  };
-  const pest = (sel, set) => ($(sel).onclick = (e) => { const b = e.target.closest("button"); if (!b) return; set(b.dataset.v); $$(sel + " button").forEach((x) => x.classList.toggle("activo", x === b)); pintar(); });
-  pest("#per", (v) => (per = v)); pest("#crit", (v) => (crit = v)); alCambiarPais(ruta);
-  pintar();
+  const bloque = (titulo, lista, fmt, conVideo) => `<div class="tarjeta podio-card"><div class="tarjeta-cab"><h3>${titulo}</h3></div>${(lista || []).length ? (() => {
+    const [u, ...resto] = lista; const link = (x) => (conVideo ? (x.short ? `https://www.youtube.com/shorts/${x.vid}` : ytv(x.vid)) : `#/canal/${x.cid}`); const tgt = conVideo ? ' target="_blank" rel="noopener"' : "";
+    return `<a class="od-uno" href="${link(u)}"${tgt}><span class="r">#1</span>${av(can[u.cid], "av44")}<div style="min-width:0"><div class="nom">${conVideo ? esc(u.titulo) : nom(can[u.cid])}</div>${conVideo ? `<div class="sub">${nom(can[u.cid])}</div>` : ""}<div class="val">${fmt(u)}</div></div></a>
+    ${resto.map((x, i) => `<a class="od-fila" href="${link(x)}"${tgt}><span class="p">${i + 2}</span>${av(can[x.cid])}<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${conVideo ? esc(x.titulo) : nom(can[x.cid])}</span><span class="val">${fmt(x)}</span></a>`).join("")}`; })() : '<div class="vacio">Se completa a medida que se juntan días de datos</div>'}</div>`;
+  const kk = (x) => K(x.v), mm = (x) => "+" + K(x.v);
+  $("#vista").innerHTML = `<div class="cab"><h1>${ic("podium")} Podios globales</h1><div class="der">${await selectorPais(false, true)}</div></div>
+  <div class="grid-podios">
+    ${bloque("Mayor crecimiento en views (mes a mes)", po?.crec_mes, (x) => `${K(x.v)} <span class="delta sube">+${x.pct}%</span> <span class="muted" style="font-size:11px;font-weight:500">prev: ${K(x.prev)}</span>`)}
+    ${bloque("Vistas YouTube ganadas (7 días)", po?.vistas7, kk)}
+    ${bloque("Vistas YouTube ganadas (30 días)", po?.vistas30, kk)}
+    ${bloque("Suscriptores ganados (7 días)", po?.subs7, kk)}
+    ${bloque("Suscriptores ganados (30 días)", po?.subs30, kk)}
+    ${bloque("Videos nuevos (7 días)", po?.videos7, (x) => miles(x.v))}
+    ${bloque("Pico de espectadores en un vivo (cerrado, últimos 7 días)", po?.pico_vivo7, kk, true)}
+    ${bloque("Vivo más largo (incluye en vivo ahora)", po?.vivo_largo, (x) => `${dur(x.dur)}${x.vivo ? ' <span class="chip rojo" style="font-size:9px;padding:0 5px">EN VIVO</span>' : ""}`, true)}
+    ${bloque("Más vivos publicados (30 días)", po?.mas_vivos30, (x) => miles(x.v))}
+    ${bloque("Mayor salto entre días consecutivos con datos (views, 30 días)", po?.salto, (x) => `${mm(x)} <span class="muted" style="font-size:11px;font-weight:500">${(x.fecha || "").slice(8, 10)}/${(x.fecha || "").slice(5, 7)}</span>`)}
+    ${bloque("Short con más vistas ganadas (7 días)", po?.short7, (x) => "+" + K(x.g7), true)}
+  </div>`;
+  alCambiarPais(ruta);
 };
 
-/* ---------------- Comparar */
-V.comparar = async () => {
+/* ---------------- Comparar canales */
+V.comparar = async (pre) => {
   const [can, a] = await Promise.all([D.canales(), D.ahora()]);
   if (!can) return sinDatos();
-  const opts = Object.values(can).sort((x, y) => (x.nombre || "").localeCompare(y.nombre || ""));
-  const pre = (sessionStorage.getItem("vz_comp") || "").split(",").filter((x) => can[x]);
-  const top = Object.entries(a?.por_canal || {}).filter(([cid]) => can[cid]?.pais === "AR").sort((x, y) => y[1] - x[1]).map((x) => x[0]);
-  const ini = pre.length ? pre : top.slice(0, 2);
-  const sel = (i) => `<span class="select"><select class="sc"><option value="">— Canal ${i + 1} —</option>${opts.map((c) => `<option value="${c.id}" ${ini[i] === c.id ? "selected" : ""}>${nom(c)}</option>`).join("")}</select></span>`;
-  $("#vista").innerHTML = `<div class="cab"><div><h1>${ic("bars")} Comparar canales</h1><div class="sub">Elegí hasta 4 canales</div></div></div>
-  <div class="filtros">${[0, 1, 2, 3].map(sel).join("")}<div class="pestanas" id="rango"><button data-v="0" class="activo">Hoy</button><button data-v="1">Ayer</button><button data-v="7">7 días</button><button data-v="30">30 días</button></div></div><div id="comp"></div>`;
-  let r = 0;
+  const opts = Object.values(can).sort((x, y) => (a?.por_canal?.[y.id] || 0) - (a?.por_canal?.[x.id] || 0) || (x.nombre || "").localeCompare(y.nombre || ""));
+  let guard = []; try { guard = JSON.parse(sessionStorage.getItem("vz_cmp") || "[]"); } catch {}
+  let A = pre && can[pre] ? pre : guard[0] || "", B = guard[1] && guard[1] !== A ? guard[1] : "";
+  let per = sessionStorage.getItem("vz_cmp_per") || "7";
+  const sel = (id, val, lbl) => `<div class="cmp-col"><div class="mini-lbl">${lbl}</div><div style="display:flex;gap:6px"><span class="select" style="flex:1"><select id="${id}" style="width:100%"><option value="">Seleccioná un canal</option>${opts.map((c) => `<option value="${c.id}" ${c.id === val ? "selected" : ""}>${nom(c)}${a?.por_canal?.[c.id] ? " · 🔴 " + K(a.por_canal[c.id]) : ""}</option>`).join("")}</select></span><button class="btn gris" data-limpiar="${id}" style="padding:6px 10px">×</button></div></div>`;
+  $("#vista").innerHTML = `<div class="cab"><h1>${ic("bars")} Comparar canales</h1></div>
+  <div class="tarjeta"><div class="cmp-cab">${sel("cA", A, "Canal A")}<div class="cmp-col"><div class="mini-lbl">Período</div><div class="pestanas" id="per">${[["0", "Hoy"], ["1", "Ayer"], ["7", "7 días"], ["30", "30 días"], ["p", "Personalizado"]].map(([v, t]) => `<button data-v="${v}">${t}</button>`).join("")}</div>
+    <div id="rango-p" class="oculto" style="margin-top:8px;display:flex;gap:6px;align-items:center"><input type="date" id="desde" class="inp"> → <input type="date" id="hasta" class="inp"></div></div>${sel("cB", B, "Canal B")}</div></div>
+  <div id="comp" class="mt"></div>`;
   const pintar = async () => {
     limpiarGraficos();
-    const ids = $$(".sc").map((s) => s.value).filter(Boolean);
-    try { sessionStorage.setItem("vz_comp", ids.join(",")); } catch {}
-    if (!ids.length) return ($("#comp").innerHTML = '<div class="tarjeta vacio">Elegí al menos un canal</div>');
+    A = $("#cA").value; B = $("#cB").value;
+    try { sessionStorage.setItem("vz_cmp", JSON.stringify([A, B])); sessionStorage.setItem("vz_cmp_per", per); } catch {}
+    $$("#per button").forEach((b) => b.classList.toggle("activo", b.dataset.v === per));
+    $("#rango-p").classList.toggle("oculto", per !== "p");
+    const ids = [A, B].filter(Boolean);
+    if (ids.length < 2) return ($("#comp").innerHTML = '<div class="tarjeta vacio">Seleccioná dos canales para comparar</div>');
     $("#comp").innerHTML = '<div class="cargando">Cargando…</div>';
     const dias = (await D.dias()) || {};
+    let fechas;
+    if (per === "0") fechas = [hoyAR()]; else if (per === "1") fechas = [hoyAR(1)];
+    else if (per === "p") { const d = $("#desde").value || hoyAR(7), h = $("#hasta").value || hoyAR(); fechas = [...new Set(ids.flatMap((id) => dias[can[id].pais] || []))].filter((f) => f >= d && f <= h).sort(); }
+    else fechas = [...new Set(ids.flatMap((id) => (dias[can[id].pais] || []).slice(-+per)))].sort();
     const ps = [...new Set(ids.map((id) => can[id].pais))];
-    const fechas = r === 0 ? [hoyAR()] : r === 1 ? [hoyAR(1)] : [...new Set(ps.flatMap((x) => (dias[x] || []).slice(-r)))].sort();
     let tiempos = [], por = {};
     for (const x of ps) { const sr = await seriesDias(x, fechas); tiempos = [...new Set([...tiempos, ...sr.tiempos])]; Object.assign(por, sr.por); }
     tiempos.sort((x, y) => x - y);
     const resl = Object.fromEntries(await Promise.all(ps.map(async (x) => [x, (await D.resumen(x)) || {}])));
-    const [s0, s7] = await Promise.all([statsEn(0), statsEn(7)]);
+    const fin = (await D.fin()) || [];
+    const idx = (await D.statsIdx()) || [];
+    const sIni = idx.filter((f) => f < (fechas[0] || hoyAR())).pop() || idx[0], sFin = idx.filter((f) => f <= (fechas[fechas.length - 1] || hoyAR())).pop();
+    const [st1, st2] = await Promise.all([sIni ? D.stats(sIni) : null, sFin ? D.stats(sFin) : null]);
+    const tMin = fechas.length ? Date.parse(fechas[0] + "T03:00:00Z") / 60000 : 0, tMax = fechas.length ? Date.parse(fechas[fechas.length - 1] + "T03:00:00Z") / 60000 + 1440 : 0;
     const fila = (cid) => {
-      const rp = resl[can[cid].pais]; const fs = r === 0 ? [hoyAR()] : r === 1 ? [hoyAR(1)] : Object.keys(rp).sort().slice(-r);
-      const rr = fs.map((f) => rp[f]?.[cid]).filter(Boolean); const min = rr.reduce((s, x) => s + x.min, 0);
-      return { c: can[cid], ahora: a?.por_canal?.[cid] || 0, pico: Math.max(0, ...rr.map((x) => x.pico)), horas: rr.reduce((s, x) => s + x.horas, 0), min, prom: min ? Math.round(rr.reduce((s, x) => s + x.prom * x.min, 0) / min) : 0,
-        subs: s0.datos?.[cid]?.subs, dsubs: s7.fecha !== s0.fecha && s0.datos?.[cid]?.subs != null && s7.datos?.[cid]?.subs != null ? s0.datos[cid].subs - s7.datos[cid].subs : null, vistas: s0.datos?.[cid]?.vistas };
+      const rp = resl[can[cid].pais]; const rr = fechas.map((f) => rp[f]?.[cid]).filter(Boolean); const min = rr.reduce((s, x) => s + x.min, 0);
+      const d = (k) => (st1 && st2 && sIni !== sFin && st1[cid]?.[k] != null && st2[cid]?.[k] != null ? st2[cid][k] - st1[cid][k] : null);
+      return { c: can[cid], pico: Math.max(0, ...rr.map((x) => x.pico)), prom: min ? Math.round(rr.reduce((s, x) => s + x.prom * x.min, 0) / min) : 0, horas: rr.reduce((s, x) => s + x.horas, 0), min,
+        vivos: fin.filter((f) => f.cid === cid && f.fin >= tMin && f.fin < tMax).length, ahora: a?.por_canal?.[cid] || 0, gv: d("vistas"), gs: d("subs"), gvid: d("videos"), subs: st2?.[cid]?.subs };
     };
-    const filas = ids.map(fila);
-    const met = [["Ahora", "ahora"], ["Pico", "pico"], ["Promedio en vivo", "prom"], ["Horas vistas", "horas"], ["Tiempo al aire", "min"], ["Suscriptores", "subs"], ["Suscriptores (7 días)", "dsubs"], ["Visualizaciones", "vistas"]];
-    $("#comp").innerHTML = `<div class="tarjeta"><div class="tarjeta-cab"><h3>Espectadores</h3></div><div class="lienzo l380"><canvas id="gcomp"></canvas></div></div>
-      <div class="tarjeta mt" style="padding:6px 8px"><div class="tabla-wrap"><table><thead><tr><th></th>${filas.map((f, i) => `<th class="n"><span style="display:inline-flex;align-items:center;gap:6px;color:${COL[i]}">${av(f.c, "av18")}${nom(f.c)}</span></th>`).join("")}</tr></thead><tbody>
-      ${met.map(([tx, k]) => { const vals = filas.map((f) => f[k]); const mx = Math.max(...vals.filter((v) => v != null)); return `<tr><td>${tx}</td>${vals.map((v) => `<td class="n" style="${v === mx && filas.length > 1 && v ? "color:var(--verde);font-weight:700" : ""}">${k === "min" ? dur(v) : k === "dsubs" ? varCelda(v) : miles(v)}</td>`).join("")}</tr>`; }).join("")}</tbody></table></div></div>`;
-    grafLineas("gcomp", tiempos.map(fechas.length > 1 ? fechaHora : horaDe), ids.map((cid, i) => ({ nombre: can[cid].nombre, datos: tiempos.map((t) => por[cid]?.[t] ?? null), color: COL[i] })), { maxTicks: 10, area: ids.length === 1, spanGaps: false });
+    const [fa, fb] = ids.map(fila);
+    const fila2 = (t, k, f = miles) => { const x = fa[k], y = fb[k]; const ga = x != null && y != null && x > y, gb = x != null && y != null && y > x; return `<tr><td class="${ga ? "gana" : ""}" style="text-align:right">${f(x)}</td><td class="cmp-met">${t}</td><td class="${gb ? "gana" : ""}">${f(y)}</td></tr>`; };
+    $("#comp").innerHTML = `<div class="tarjeta"><div class="tarjeta-cab"><h3>Espectadores en el período</h3></div><div class="lienzo l380"><canvas id="gcomp"></canvas></div></div>
+      <div class="grid g2 mt"><div class="tarjeta"><div class="tarjeta-cab"><h3>Métricas en vivo</h3></div><table class="cmp-tabla"><thead><tr><th style="text-align:right;color:${COL[0]}">${nom(fa.c)}</th><th></th><th style="color:${COL[2]}">${nom(fb.c)}</th></tr></thead><tbody>
+        ${fila2("En vivo ahora", "ahora")}${fila2("Pico", "pico")}${fila2("Promedio", "prom")}${fila2("Horas vistas", "horas")}${fila2("Tiempo al aire", "min", dur)}${fila2("Vivos realizados", "vivos")}</tbody></table></div>
+      <div class="tarjeta"><div class="tarjeta-cab"><h3>Métricas on demand</h3></div><table class="cmp-tabla"><thead><tr><th style="text-align:right;color:${COL[0]}">${nom(fa.c)}</th><th></th><th style="color:${COL[2]}">${nom(fb.c)}</th></tr></thead><tbody>
+        ${fila2("Vistas ganadas", "gv")}${fila2("Suscriptores ganados", "gs")}${fila2("Videos nuevos", "gvid")}${fila2("Suscriptores totales", "subs")}</tbody></table></div></div>`;
+    grafLineas("gcomp", tiempos.map(fechas.length > 1 ? fechaHora : horaDe), [fa, fb].map((f, i) => ({ nombre: f.c.nombre, datos: tiempos.map((t) => por[f.c.id]?.[t] ?? null), color: COL[i * 2] })), { maxTicks: 10, area: true, spanGaps: false });
   };
-  $$(".sc").forEach((s) => (s.onchange = pintar));
-  $("#rango").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; r = +b.dataset.v; $$("#rango button").forEach((x) => x.classList.toggle("activo", x === b)); pintar(); };
+  $("#cA").onchange = pintar; $("#cB").onchange = pintar;
+  $$("[data-limpiar]").forEach((b) => (b.onclick = () => { $("#" + b.dataset.limpiar).value = ""; pintar(); }));
+  $("#per").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; per = b.dataset.v; pintar(); };
+  $("#desde").onchange = pintar; $("#hasta").onchange = pintar;
   pintar();
 };
 
 /* ---------------- Página de canal */
 V.canal = async (cid) => {
-  const [can, a, fin, vids, s0, s7, s30, rec] = await Promise.all([D.canales(), D.ahora(), D.fin(), D.videos(), statsEn(0), statsEn(7), statsEn(30), D.records()]);
+  const [can, a, fin, rec, idx] = await Promise.all([D.canales(), D.ahora(), D.fin(), D.records(), D.statsIdx()]);
   const c = can?.[cid];
   if (!c) return ($("#vista").innerHTML = '<div class="tarjeta vacio">Canal no encontrado</div>');
-  const dias = (await D.dias()) || {};
-  const fechas = (dias[c.pais] || []).slice(-7);
-  const { tiempos, por } = await seriesDias(c.pais, fechas);
+  const info = (await cargar(`canal/${cid}.json`, 30)) || { serie: {}, recientes: [], top_videos: [], top_shorts: [] };
+  const serie = Object.entries(info.serie || {}).sort((x, y) => x[0].localeCompare(y[0]));
+  const ult = serie[serie.length - 1]?.[1] || [], hace30 = serie.filter(([f]) => f <= hoyAR(30)).pop()?.[1], hace60 = serie.filter(([f]) => f <= hoyAR(60)).pop()?.[1];
+  const d30 = (k) => (hace30 && ult[k] != null && hace30[k] != null ? ult[k] - hace30[k] : null);
+  const d30p = (k) => (hace60 && hace30 && hace30[k] != null && hace60[k] != null ? hace30[k] - hace60[k] : null);
+  const vsPrev = (k) => { const x = d30(k), y = d30p(k); return x != null && y ? `<div class="${x >= y ? "verde" : "rojo"}" style="font-size:11px;font-weight:600">${x >= y ? "+" : ""}${Math.round(((x - y) * 100) / Math.abs(y))}% período anterior</div>` : ""; };
   const res = (await D.resumen(c.pais)) || {};
-  const u7 = Object.keys(res).sort().slice(-7);
-  const pico7 = Math.max(0, ...u7.map((f) => res[f]?.[cid]?.pico || 0));
-  const horas7 = u7.reduce((s, f) => s + (res[f]?.[cid]?.horas || 0), 0), min7 = u7.reduce((s, f) => s + (res[f]?.[cid]?.min || 0), 0);
-  const x0 = s0.datos?.[cid] || {}, x7 = s7.fecha !== s0.fecha ? s7.datos?.[cid] || {} : {}, x30 = s30.fecha !== s0.fecha ? s30.datos?.[cid] || {} : {};
-  const misFin = (fin || []).filter((f) => f.cid === cid).slice(0, 60);
-  const misVids = Object.values(vids || {}).filter((v) => v.cid === cid).sort((x, y) => (y.publicado || "").localeCompare(x.publicado || "")).slice(0, 15);
-  const enVivo = (a?.lives || []).filter((l) => l.cid === cid);
+  let pico30 = null; Object.entries(res).filter(([f]) => f >= hoyAR(30)).forEach(([f, r]) => { if (r[cid] && (!pico30 || r[cid].pico > pico30.v)) pico30 = { v: r[cid].pico, f }; });
   const ahoraV = a?.por_canal?.[cid] || 0;
-  $("#vista").innerHTML = `<div class="perfil">${av(c, "av80")}<div style="min-width:200px"><h1 style="margin:0 0 4px;font-size:24px;display:flex;align-items:center;gap:8px">${nom(c)} ${estrella(c.id)}</h1>
-    <div class="sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${bandera(c.pais, "f18")} ${esc(c.cat)} · ${c.handle ? esc(c.handle) + " · " : ""}<a href="https://www.youtube.com/channel/${c.id}" target="_blank" rel="noopener" class="rojo">Ver en YouTube ↗</a></div></div>
-    <div class="nums"><div><b>${K(x0.subs)}</b><span>Suscriptores${x7.subs != null ? ` (${mas(x0.subs - x7.subs)} 7d)` : ""}</span></div><div><b>${K(x0.vistas)}</b><span>Visualizaciones${x7.vistas != null ? ` (${mas(x0.vistas - x7.vistas)} 7d)` : ""}</span></div><div><b>${miles(x0.videos)}</b><span>Videos${x30.videos != null ? ` (${mas(x0.videos - x30.videos)} 30d)` : ""}</span></div></div></div>
-  <div class="grid g3">
-    <div class="tarjeta kpi"><div class="ico">${ic("users")}</div><div><div class="num">${K(ahoraV)}</div><div class="lbl">Espectadores ahora</div>${ahoraV ? delta(pct(ahoraV, a?.por_canal_ayer?.[cid])) : '<span class="delta muted">fuera del aire</span>'}</div></div>
-    <div class="tarjeta kpi"><div class="ico">${ic("flame")}</div><div><div class="num">${K(pico7)}</div><div class="lbl">Pico de los últimos 7 días</div><span class="delta muted">récord: ${K(rec?.[cid])}</span></div></div>
-    <div class="tarjeta kpi"><div class="ico">${ic("clock")}</div><div><div class="num">${K(horas7)}</div><div class="lbl">Horas vistas en 7 días</div><span class="delta muted">${dur(min7)} al aire</span></div></div>
+  const misLives = (a?.lives || []).filter((l) => l.cid === cid);
+  const misFin = (fin || []).filter((f) => f.cid === cid);
+  let notas = ""; try { notas = localStorage.getItem("vz_nota_" + cid) || ""; } catch {}
+  $("#vista").innerHTML = `<div class="canal-cab">${av(c, "av56 " + (ahoraV ? "anillo" : ""))}<div style="min-width:0"><h1 style="margin:0;font-size:22px;display:flex;align-items:center;gap:8px">${nom(c)} ${c.verificado ? '<span class="verif">✓</span>' : ""} ${bandera(c.pais, "f18")}</h1>
+    <div class="sub" style="display:flex;align-items:center;gap:8px;margin-top:3px">${esc(c.cat)}${ahoraV ? ` · <span class="dot vivo"></span><b class="rojo" style="font-size:17px">${K(ahoraV)}</b> en vivo` : ""}</div></div>
+    <div class="der canal-btns"><button class="btn gris ${S.esFav(cid) ? "fav-on" : ""}" id="b-fav">${ic("star")} ${S.esFav(cid) ? "Quitar" : "Favorito"}</button><a class="btn gris" href="#/comparar/${cid}">${ic("bars")} Comparar canal</a><button class="btn gris" id="b-exp">⤓ Exportar</button><a class="btn gris" href="https://www.youtube.com/channel/${cid}" target="_blank" rel="noopener">▶ Abrir en YouTube</a></div></div>
+  <div class="grid-kpi5">
+    <div class="tarjeta k5"><div class="mini-lbl">VISTAS</div><div class="num">${K(ult[1])}</div><div class="sub">Últimos 30d: ${d30(1) != null ? "+" + K(d30(1)) : "—"}</div>${vsPrev(1)}</div>
+    <div class="tarjeta k5"><div class="mini-lbl">PICO ÚLTIMOS 30D</div><div class="num">${pico30 ? miles(pico30.v) : "—"}</div><div class="sub">${pico30 ? pico30.f.slice(8, 10) + "/" + pico30.f.slice(5, 7) + "/" + pico30.f.slice(0, 4) : ""}</div></div>
+    <div class="tarjeta k5"><div class="mini-lbl">PICO MÁXIMO</div><div class="num">${rec?.[cid] ? miles(rec[cid]) : "—"}</div><div class="sub">desde que lo seguimos</div></div>
+    <div class="tarjeta k5"><div class="mini-lbl">SUSCRIPTORES</div><div class="num">${K(ult[0])}</div><div class="sub">Últimos 30d: ${d30(0) != null ? "+" + K(d30(0)) : "—"}</div>${vsPrev(0)}</div>
+    <div class="tarjeta k5"><div class="mini-lbl">VIDEOS</div><div class="num">${miles(ult[2])}</div><div class="sub">Últimos 30d: ${d30(2) != null ? "+" + miles(d30(2)) : "—"}</div>${vsPrev(2)}</div>
   </div>
-  ${enVivo.length ? `<div class="tarjeta mt"><div class="tarjeta-cab"><h3><span class="dot vivo"></span> En vivo ahora</h3></div><div class="lista-vivos">${enVivo.map((l, i) => itemVivo(l, i, can, COL[0])).join("")}</div></div>` : ""}
-  <div class="tarjeta mt"><div class="tarjeta-cab"><h3>Espectadores · últimos 7 días</h3></div><div class="lienzo"><canvas id="gc"></canvas></div></div>
-  <div class="grid g2 mt">
-    <div class="tarjeta" style="padding:6px 8px"><div class="tarjeta-cab" style="padding:10px 10px 0"><h3>Vivos finalizados</h3></div>${tabla([
-      { t: "Vivo", v: (f) => f.titulo, h: (f) => `<a href="${ytv(f.vid)}" target="_blank" rel="noopener"><div class="tit2">${esc(f.titulo)}</div><div class="sub">${fechaHora(f.ini)} · ${dur(f.dur)}</div></a>` },
-      { t: "Pico", n: 1, v: (f) => f.pico, h: (f) => `<b class="rojo">${K(f.pico)}</b>` }, { t: "Prom.", n: 1, v: (f) => f.prom, h: (f) => K(f.prom) }], misFin, { limite: 60 })}</div>
-    <div class="tarjeta" style="padding:6px 8px"><div class="tarjeta-cab" style="padding:10px 10px 0"><h3>Últimos videos</h3></div>${tabla([
-      { t: "Video", v: (v) => v.titulo, h: (v) => `<a href="${v.short ? "https://www.youtube.com/shorts/" + v.vid : ytv(v.vid)}" target="_blank" rel="noopener"><div class="tit2">${v.short ? '<span class="chip" style="padding:0 5px;font-size:9px">SHORT</span> ' : ""}${esc(v.titulo)}</div><div class="sub">${(v.publicado || "").slice(0, 10)}</div></a>` },
-      { t: "Vistas", n: 1, v: (v) => v.vistas, h: (v) => K(v.vistas) }], misVids)}</div></div>`;
-  grafLineas("gc", tiempos.map(fechaHora), [{ nombre: c.nombre, datos: tiempos.map((t) => por[cid]?.[t] ?? 0), color: COL[0] }], { area: true, maxTicks: 8 });
+  <div class="grid g-dash mt">
+    <div style="min-width:0">
+      <div class="tarjeta"><div class="tarjeta-cab"><h3>Espectadores en vivo</h3></div><div class="filtros" style="margin-bottom:8px"><span class="etq">Rango</span><span class="select"><select id="rango"><option value="12">12 horas</option><option value="24">24 horas</option><option value="168">7 días</option><option value="720">30 días</option></select></span></div>
+        <div class="lienzo"><canvas id="gc"></canvas></div><div class="grid-kpi4" id="kpi-r"></div></div>
+      <div class="tarjeta mt"><div class="tarjeta-cab"><h3>Métricas recientes</h3></div><div class="pestanas" id="met"><button data-k="1" class="activo">Vistas 30d</button><button data-k="0">Suscriptores 30d</button><button data-k="2">Videos 30d</button></div>
+        <div class="lienzo l220 mt"><canvas id="gm"></canvas></div><div id="met-res"></div></div>
+    </div>
+    <div class="tarjeta" style="display:flex;flex-direction:column"><div class="tarjeta-cab"><h3>Programación</h3></div>
+      <div class="pestanas" id="tabs" style="width:100%"><button data-t="vivos" class="activo" style="flex:1">Vivos</button><button data-t="titulos" style="flex:1">Títulos</button><button data-t="notas" style="flex:1">Notas</button></div>
+      <div id="tab-c" class="mt" style="flex:1;overflow:auto;max-height:620px"></div></div>
+  </div>
+  <div class="tarjeta mt"><div class="tarjeta-cab"><h3>Videos más vistos</h3><a class="der rojo" href="https://www.youtube.com/channel/${cid}/videos" target="_blank" rel="noopener">Ver más videos de ${nom(c)}</a></div><div class="fila-h">${info.top_videos.map((x) => tarjetaVideo({ ...x, cid }, can).replace('style="width:auto"', 'style="width:200px"')).join("") || '<div class="vacio">—</div>'}</div></div>
+  <div class="tarjeta mt"><div class="tarjeta-cab"><h3>Shorts más vistos</h3><a class="der rojo" href="https://www.youtube.com/channel/${cid}/shorts" target="_blank" rel="noopener">Ver más shorts de ${nom(c)}</a></div><div class="fila-h">${info.top_shorts.map((x) => tarjetaVideo({ ...x, cid }, can).replace('style="width:auto"', 'style="width:160px"')).join("") || '<div class="vacio">—</div>'}</div></div>`;
+  // favorito
+  $("#b-fav").onclick = () => { const on = S.alternarFav(cid); $("#b-fav").innerHTML = `${ic("star")} ${on ? "Quitar" : "Favorito"}`; $("#b-fav").classList.toggle("fav-on", on); };
+  // pestañas
+  const tabs = {
+    vivos: () => [...misLives.map((l) => ({ ...l, ahora: true })), ...misFin.slice(0, 40)].map((x) => `<a class="vl" href="${ytv(x.vid)}" target="_blank" rel="noopener" style="${x.ahora ? "background:linear-gradient(90deg,rgba(252,32,68,.12),transparent);border-radius:10px" : ""}"><span class="mini" style="width:120px;height:68px"><img src="${x.ahora ? thumbLive(x.vid) : thumb(x.vid)}" onerror="this.onerror=null;this.src='${thumb(x.vid)}'" loading="lazy" alt="">${x.ahora ? '<span class="badge-live">LIVE</span>' : `<span class="badge-dur">${dur(x.dur)}</span>`}</span><div style="min-width:0"><div class="tit2">${esc(x.titulo)}</div><div class="sub" style="margin-top:3px">${x.ahora ? `hace ${dur(tAhora() - x.ini)}` : fechaHora(x.ini)}</div><div style="font-size:12px;margin-top:2px">${x.ahora ? `<b class="rojo">${K(x.viewers)} ahora</b>` : `<b class="rojo">pico ${K(x.pico)}</b> <span class="muted">prom ${K(x.prom)}</span>`}</div></div></a>`).join("") || '<div class="vacio">Todavía no registramos vivos de este canal</div>',
+    titulos: () => [...misLives, ...misFin].map((x) => `<div style="padding:8px 4px;border-bottom:1px solid var(--borde)"><div style="font-size:12.5px;font-weight:600">${esc(x.titulo)}</div><div class="sub">${fechaHora(x.ini)}</div></div>`).join("") || '<div class="vacio">—</div>',
+    notas: () => `<textarea id="nota" class="inp" style="width:100%;min-height:220px;resize:vertical" placeholder="Escribí notas sobre este canal (quedan guardadas en este dispositivo)">${esc(notas)}</textarea>`,
+  };
+  const abrir = (t) => { $$("#tabs button").forEach((b) => b.classList.toggle("activo", b.dataset.t === t)); $("#tab-c").innerHTML = tabs[t](); const n = $("#nota"); if (n) n.oninput = () => { try { localStorage.setItem("vz_nota_" + cid, n.value); } catch {} }; };
+  $("#tabs").onclick = (e) => { const b = e.target.closest("button"); if (b) abrir(b.dataset.t); };
+  abrir("vivos");
+  // grafico de espectadores con rango
+  let datosExp = [];
+  const graf = async () => {
+    const horas = +$("#rango").value;
+    graficos.splice(0).forEach((g) => { if (g.canvas.id === "gc") g.destroy(); else graficos.push(g); });
+    let tiempos, por;
+    if (horas <= 24) ({ tiempos, por } = await seriesRecientes(c.pais, horas, [cid]));
+    else { const dias = (await D.dias()) || {}; ({ tiempos, por } = await seriesDias(c.pais, (dias[c.pais] || []).slice(-Math.ceil(horas / 24) - 1), tAhora() - horas * 60)); }
+    const vals = tiempos.map((t) => por[cid]?.[t] ?? 0);
+    datosExp = tiempos.map((t, i) => [fechaHora(t), vals[i]]);
+    const enAire = vals.filter((v) => v > 0); const paso = tiempos.length > 1 ? (tiempos[tiempos.length - 1] - tiempos[0]) / (tiempos.length - 1) : 10;
+    $("#kpi-r").innerHTML = [["PICO MÁXIMO", miles(Math.max(0, ...vals))], ["PROMEDIO ESPECTADORES", miles(enAire.length ? enAire.reduce((s, v) => s + v, 0) / enAire.length : 0)], ["HORAS VISTAS", K(enAire.reduce((s, v) => s + v, 0) * paso / 60)], ["TIEMPO AL AIRE", dur(enAire.length * paso)]].map(([t, v]) => `<div class="k4"><div class="mini-lbl">${t}</div><b>${v}</b></div>`).join("");
+    grafLineas("gc", tiempos.map(horas > 24 ? fechaHora : horaDe), [{ nombre: "Espectadores", datos: vals, color: COL[0] }], { area: true, maxTicks: 10 });
+  };
+  $("#rango").onchange = graf;
+  $("#b-exp").onclick = () => { const csv = "fecha,espectadores\n" + datosExp.map((r) => r.join(",")).join("\n"); const u = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); const el = document.createElement("a"); el.href = u; el.download = `${(c.nombre || cid).replace(/[^\w]+/g, "_")}_espectadores.csv`; el.click(); };
+  await graf();
+  // metricas recientes (diarias)
+  const met = (k) => {
+    graficos.splice(0).forEach((g) => { if (g.canvas.id === "gm") g.destroy(); else graficos.push(g); });
+    const s30 = serie.filter(([f]) => f >= hoyAR(31));
+    const diarios = s30.slice(1).map(([f, v], i) => [f, v[k] != null && s30[i][1][k] != null ? v[k] - s30[i][1][k] : null]);
+    const total = diarios.reduce((s, x) => s + (x[1] || 0), 0);
+    grafLineas("gm", diarios.map(([f]) => f.slice(8, 10) + "/" + f.slice(5, 7)), [{ nombre: ["Suscriptores", "Vistas", "Videos"][k], datos: diarios.map((x) => x[1]), color: "#3b82f6" }], { area: true, maxTicks: 8 });
+    $("#met-res").innerHTML = diarios.length ? `<div class="bloque mt" style="border-left:3px solid var(--azul)"><b>${["Suscriptores ganados", "Vistas acumuladas", "Videos publicados"][k]} del período</b><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:4px"><span class="sub">${s30[0][0]} — ${s30[s30.length - 1][0]}</span><b style="font-size:20px">${miles(total)}</b></div><div class="sub">Promedio diario · ${miles(total / diarios.length)}</div></div>
+      <div class="tabla-wrap" style="max-height:240px;overflow:auto"><table><thead><tr><th>Fecha</th><th class="n">Del día</th><th class="n">Total acumulado</th></tr></thead><tbody>${s30.slice(1).reverse().map(([f, v], i, arr) => `<tr><td>${f}</td><td class="n">${miles(diarios[diarios.length - 1 - i][1])}</td><td class="n">${miles(v[k])}</td></tr>`).join("")}</tbody></table></div>` : '<div class="vacio">Se completa a medida que se juntan días de datos</div>';
+  };
+  $("#met").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; $$("#met button").forEach((x) => x.classList.toggle("activo", x === b)); met(+b.dataset.k); };
+  met(1);
 };
+
 
 /* ============================================================ navegación */
 async function ruta() {

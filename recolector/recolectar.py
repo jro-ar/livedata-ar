@@ -419,6 +419,97 @@ def actualizar_estadisticas(canales, hoy, solo=None):
     for viejo in idx[:-400]: os.remove(os.path.join(DATOS, "stats", viejo + ".json"))
     escribir("stats_indice.json", idx[-400:])
 
+# ---------------------------------------------------------------- derivados (cada hora)
+def _min_v(v):
+    return {"vid": v["vid"], "cid": v["cid"], "titulo": v.get("titulo"), "publicado": v.get("publicado"), "vistas": v.get("vistas"), "short": bool(v.get("short"))}
+
+def generar_derivados(canales):
+    """Archivos livianos para el panel: pagina de cada canal, videos destacados y podios."""
+    ahora = ahora_ar(); t = tmin_ahora()
+    hace = lambda d: fecha(ahora - timedelta(days=d))
+    carpeta = os.path.join(DATOS, "stats")
+    idx = sorted(f[:-5] for f in os.listdir(carpeta) if f.endswith(".json")) if os.path.isdir(carpeta) else []
+    ult = idx[-95:]
+    st = {f: leer(f"stats/{f}.json", {}) for f in ult}
+    def en(d):
+        c = [f for f in ult if f <= hace(d)]
+        return st[c[-1]] if c else None
+    s0 = st[ult[-1]] if ult else {}
+    s7, s30, s60 = en(7), en(30), en(60)
+    videos = leer("videos.json", {})
+    fin = leer("finalizados.json", [])
+    activos = leer("activos.json", {})
+    lim7 = (ahora - timedelta(days=7)).isoformat()
+    def gan7(v):
+        if (v.get("publicado") or "") >= lim7: return v.get("vistas") or 0
+        h = v.get("h", {}); base = [k for k in sorted(h) if k <= hace(7)]
+        return (v.get("vistas") or 0) - h[base[-1]] if base else None
+    por_canal = {}
+    for v in videos.values(): por_canal.setdefault(v["cid"], []).append(v)
+    for cid in canales:
+        vs = por_canal.get(cid, [])
+        serie = {f: [st[f][cid].get("subs"), st[f][cid].get("vistas"), st[f][cid].get("videos")] for f in ult if st[f].get(cid)}
+        rec = sorted(vs, key=lambda v: v.get("publicado") or "", reverse=True)[:20]
+        tv = sorted([v for v in vs if not v.get("short")], key=lambda v: -(v.get("vistas") or 0))[:12]
+        ts = sorted([v for v in vs if v.get("short")], key=lambda v: -(v.get("vistas") or 0))[:12]
+        escribir(f"canal/{cid}.json", {"serie": serie, "recientes": [_min_v(v) for v in rec], "top_videos": [_min_v(v) for v in tv], "top_shorts": [_min_v(v) for v in ts]})
+    # videos destacados por pais
+    grupos = {}
+    for v in videos.values():
+        p = canales.get(v["cid"], {}).get("pais")
+        if not p: continue
+        x = _min_v(v); x["g7"] = gan7(v)
+        grupos.setdefault(p, []).append(x); grupos.setdefault("GL", []).append(x)
+    l1 = (ahora - timedelta(days=1)).isoformat(); l30 = (ahora - timedelta(days=30)).isoformat()
+    for p, lst in grupos.items():
+        top = lambda lim, n: sorted([x for x in lst if (x["publicado"] or "") >= lim], key=lambda x: -(x["vistas"] or 0))[:n]
+        escribir(f"videos_top/{p}.json", {
+            "explotando": sorted([x for x in lst if not x["short"] and (x["g7"] or 0) > 0], key=lambda x: -x["g7"])[:30],
+            "shorts": sorted([x for x in lst if x["short"] and (x["g7"] or 0) > 0], key=lambda x: -x["g7"])[:30],
+            "d1": top(l1, 150), "d7": top(lim7, 200), "d30": top(l30, 250)})
+    # podios por pais
+    def dif(a, b, cid, k):
+        if not a or not b or a is b: return None
+        x, y = (a.get(cid) or {}).get(k), (b.get(cid) or {}).get(k)
+        return x - y if x is not None and y is not None else None
+    paises = {c.get("pais") for c in canales.values() if c.get("pais")}
+    for p in list(paises) + ["GL"]:
+        ids = [cid for cid, c in canales.items() if p == "GL" or c.get("pais") == p]
+        def rank(k, a, b, n=5):
+            out = [{"cid": cid, "v": dif(a, b, cid, k)} for cid in ids]
+            return sorted([x for x in out if x["v"] and x["v"] > 0], key=lambda x: -x["v"])[:n]
+        crec = []
+        for cid in ids:
+            g, pr = dif(s0, s30, cid, "vistas"), dif(s30, s60, cid, "vistas")
+            if g and pr is not None and g > 0:
+                crec.append({"cid": cid, "v": g, "prev": pr, "pct": min(1000, round((g - pr) * 100 / pr)) if pr > 0 else 1000})
+        crec.sort(key=lambda x: (-x["pct"], -x["v"]))
+        en_p = lambda cid: p == "GL" or canales.get(cid, {}).get("pais") == p
+        pico7 = sorted([f for f in fin if f["fin"] >= t - 7 * 1440 and en_p(f["cid"])], key=lambda f: -f["pico"])[:5]
+        largos = [{"vid": a["vid"], "cid": a["cid"], "titulo": a["titulo"], "dur": t - a["ini"], "vivo": True} for a in activos.values() if en_p(a["cid"]) and t - a.get("ult", 0) <= 15]
+        largos += [{"vid": f["vid"], "cid": f["cid"], "titulo": f["titulo"], "dur": f["dur"], "vivo": False} for f in fin if en_p(f["cid"])]
+        largos.sort(key=lambda x: -x["dur"])
+        cuenta = {}
+        for f in fin:
+            if f["fin"] >= t - 30 * 1440 and en_p(f["cid"]): cuenta[f["cid"]] = cuenta.get(f["cid"], 0) + 1
+        salto = []
+        fs = [f for f in ult if f >= hace(30)]
+        for cid in ids:
+            mejor = None
+            for a, b in zip(fs, fs[1:]):
+                d = dif(st[b], st[a], cid, "vistas")
+                if d and (not mejor or d > mejor["v"]): mejor = {"cid": cid, "v": d, "fecha": b}
+            if mejor: salto.append(mejor)
+        salto.sort(key=lambda x: -x["v"])
+        sh = sorted([x for x in grupos.get(p, []) if x["short"] and (x["g7"] or 0) > 0], key=lambda x: -x["g7"])[:5]
+        escribir(f"podios/{p}.json", {
+            "crec_mes": crec[:5], "vistas7": rank("vistas", s0, s7), "vistas30": rank("vistas", s0, s30),
+            "subs7": rank("subs", s0, s7), "subs30": rank("subs", s0, s30), "videos7": rank("videos", s0, s7),
+            "pico_vivo7": [{"vid": f["vid"], "cid": f["cid"], "titulo": f["titulo"], "v": f["pico"]} for f in pico7],
+            "vivo_largo": largos[:5], "mas_vivos30": [{"cid": c, "v": n} for c, n in sorted(cuenta.items(), key=lambda x: -x[1])[:5]],
+            "salto": salto[:5], "short7": sh})
+    log("derivados listos")
+
 # ---------------------------------------------------------------- muestras
 def escanear(canales, solo_ar=False):
     """Revisa los canales y devuelve los vivos encontrados con sus espectadores exactos."""
@@ -509,7 +600,7 @@ def actualizar_activos(vivos, t, completo):
             if a["faltas"] >= 2 or t - a.get("ult", t) > 60:
                 fin.insert(0, {"vid": vid, "cid": a["cid"], "titulo": a["titulo"], "ini": a["ini"], "fin": a.get("ult", t),
                                "dur": a.get("ult", t) - a["ini"], "pico": a["pico"], "pico_t": a["pico_t"],
-                               "prom": round(a["suma"] / max(a["n"], 1)), "mg": a.get("mg")})
+                               "prom": round(a["suma"] / max(a["n"], 1)), "mg": a.get("mg"), "ultv": a.get("viewers")})
                 del activos[vid]
         escribir("finalizados.json", fin[:FINALIZADOS_MAX])
     return activos
@@ -618,6 +709,22 @@ def guardar_muestra(canales, vivos, t):
         tot[hoy] = [[s["t"], sum(s["d"].values())] for s in dia["m"]]
         tot = dict(sorted(tot.items())[-DIAS_GUARDADOS:])
         escribir(f"totales/{p}.json", tot)
+        tc = leer(f"totales_cat/{p}.json", {})
+        porcat = {}
+        for v in vp:
+            cat = canales[v["cid"]].get("cat", "Otros / Especializados")
+            porcat[cat] = porcat.get(cat, 0) + v["viewers"]
+        dc = tc.setdefault(hoy, {})
+        for cat, n in porcat.items(): dc.setdefault(cat, []).append([t, n])
+        tc = dict(sorted(tc.items())[-15:])
+        escribir(f"totales_cat/{p}.json", tc)
+        acc2 = {}
+        for f, cats in list(tc.items())[-14:]:
+            for cat, serie in cats.items():
+                for tt, n in serie:
+                    dt = datetime.fromtimestamp(tt * 60, AR)
+                    a = acc2.setdefault(cat, {}).setdefault((dt.weekday(), dt.hour), [0, 0]); a[0] += n; a[1] += 1
+        escribir(f"heatmap_cat/{p}.json", {cat: [{"dia": k[0], "hora": k[1], "prom": round(v[0] / v[1])} for k, v in sorted(d.items())] for cat, d in acc2.items()})
         res = leer(f"resumen/{p}.json", {})
         res[hoy] = resumir_dia(dia)
         escribir(f"resumen/{p}.json", dict(sorted(res.items())[-400:]))
@@ -693,6 +800,9 @@ def vuelta_completa(canales):
         elif faltan:
             actualizar_estadisticas(canales, hoy, solo=faltan[:40])
     except Exception: traceback.print_exc()
+    if time.time() - ctrl.get("deriv", 0) > 3600:
+        try: generar_derivados(canales); ctrl["deriv"] = time.time()
+        except Exception: traceback.print_exc()
     escribir("ciclos.json", ctrl)
     vivos, errores, n = escanear(canales)
     if errores > n * 0.5:
