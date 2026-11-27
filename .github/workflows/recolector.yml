@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   recolectar:
@@ -47,3 +48,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DATOS_DIR: ${{ github.workspace }}/datos
         run: python3 recolector/recolectar.py "${{ github.event.inputs.minutos || '345' }}"
+
+      - name: Encadenar la siguiente tanda (para que no haya huecos)
+        if: always() && github.event.inputs.minutos != '0' && github.event.inputs.minutos != 'prueba'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run recolector.yml -R "${{ github.repository }}" -f minutos=345 || true

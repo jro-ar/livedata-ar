@@ -192,16 +192,33 @@ function grafLineas(id, etiquetas, series, op = {}) {
       responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, animation: { duration: 350 },
       plugins: { legend: { display: op.leyenda !== false && series.length > 1, position: op.leyendaPos || "bottom", align: op.leyendaPos === "top" ? "end" : "center", labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle", padding: 14, color: "#9ca3af" } },
         tooltip: { backgroundColor: "#1a1e26", borderColor: "rgba(255,255,255,.1)", borderWidth: 1, padding: 10, callbacks: { label: (c) => ` ${c.dataset.label}: ${miles(c.parsed.y)}` } } },
-      scales: { x: { ticks: { maxTicksLimit: op.maxTicks || 12, maxRotation: 0, autoSkip: true }, grid: { display: false } },
+      scales: { x: { ticks: op.horas ? { autoSkip: false, maxRotation: 0, callback: function (v, i) { const t = op.horas[i], tp = op.horas[i - 1]; if (t == null) return ""; const h = horaH(t); return i === 0 || (tp != null && horaH(tp) !== h) ? (op.cadaHoras && (+h.slice(0, 2)) % op.cadaHoras ? "" : h) : ""; } } : { maxTicksLimit: op.maxTicks || 12, maxRotation: 0, autoSkip: true }, grid: { display: false } },
         y: { beginAtZero: true, ticks: { callback: (v) => (v >= 1000 ? Math.round(v / 1000) + "K" : v), maxTicksLimit: 6 }, grid: { color: "rgba(255,255,255,.04)" } } },
     },
   });
   graficos.push(g);
 }
+const etiquetasAfuera = {
+  id: "etiquetasAfuera",
+  afterDatasetsDraw(ch) {
+    const meta = ch.getDatasetMeta(0), tot = ch.data.datasets[0].data.reduce((a, b) => a + b, 0), ctx = ch.ctx;
+    ctx.save(); ctx.font = "500 10.5px Inter, sans-serif"; ctx.fillStyle = "#9ca3af"; ctx.strokeStyle = "rgba(156,163,175,.6)"; ctx.lineWidth = 1;
+    meta.data.forEach((arc, i) => {
+      const v = ch.data.datasets[0].data[i]; if (!tot || v / tot < 0.025) return;
+      const ang = (arc.startAngle + arc.endAngle) / 2, r = arc.outerRadius, cx = arc.x, cy = arc.y;
+      const x1 = cx + Math.cos(ang) * r, y1 = cy + Math.sin(ang) * r, x2 = cx + Math.cos(ang) * (r + 12), y2 = cy + Math.sin(ang) * (r + 12);
+      const der = Math.cos(ang) >= 0, x3 = x2 + (der ? 10 : -10);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y2); ctx.stroke();
+      let txt = String(ch.data.labels[i]); if (txt.length > 12) txt = txt.slice(0, 11) + "…";
+      ctx.textAlign = der ? "left" : "right"; ctx.textBaseline = "middle"; ctx.fillText(txt, x3 + (der ? 3 : -3), y2);
+    });
+    ctx.restore();
+  },
+};
 function grafDona(id, etiquetas, datos, colores, op = {}) {
   const el = document.getElementById(id); if (!el) return;
-  graficos.push(new Chart(el, { type: "doughnut", data: { labels: etiquetas, datasets: [{ data: datos, backgroundColor: colores, borderWidth: 0, hoverOffset: 4 }] },
-    options: { responsive: true, maintainAspectRatio: false, cutout: op.cutout || "58%", plugins: { legend: { display: !!op.leyenda, position: "bottom", labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle", padding: 10, color: "#9ca3af" } }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${miles(c.parsed)}` } } } } }));
+  graficos.push(new Chart(el, { type: "doughnut", data: { labels: etiquetas, datasets: [{ data: datos, backgroundColor: colores, borderWidth: 0, hoverOffset: 4 }] }, plugins: op.etiquetas ? [etiquetasAfuera] : [],
+    options: { responsive: true, maintainAspectRatio: false, cutout: op.cutout || "58%", layout: { padding: op.etiquetas ? { left: 70, right: 70, top: 24, bottom: 24 } : 0 }, plugins: { legend: { display: !!op.leyenda, position: "bottom", labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle", padding: 10, color: "#9ca3af" } }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${miles(c.parsed)}` } } } } }));
 }
 function grafBarras(id, etiquetas, datos, op = {}) {
   const el = document.getElementById(id); if (!el) return;
@@ -268,7 +285,9 @@ V.dash = async () => {
   const dp = datosPais(a, p), np = await nombrePais(p);
   const lives = a.lives.filter(enPais(p));
   const pc = {}; lives.forEach((l) => (pc[l.cid] = (pc[l.cid] || 0) + l.viewers));
-  const top5 = Object.entries(pc).sort((x, y) => y[1] - x[1]).slice(0, 5).map((x) => x[0]);
+  const s12 = await seriesRecientes(p, 12);
+  const picos = Object.entries(s12.por).filter(([cid]) => p === "GL" || can[cid]?.pais === p).map(([cid, o]) => [cid, Math.max(0, ...Object.values(o))]);
+  const top5 = (picos.length ? picos : Object.entries(pc)).sort((x, y) => y[1] - x[1]).slice(0, 5).map((x) => x[0]);
   const colorDe = {}; top5.forEach((cid, i) => (colorDe[cid] = COL[i]));
   const cats = Object.entries(dp.categorias || {}).sort((x, y) => y[1].viewers - x[1].viewers);
   const pHeat = p === "GL" ? Object.keys((await D.dias()) || {}) : [p];
@@ -315,9 +334,12 @@ V.dash = async () => {
   <div class="tarjeta mt"><div class="tarjeta-cab"><h3>On demand · últimos 7 días</h3></div>
     <div class="grid g3">${odCard("Vistas acumuladas en 7 días", od("vistas"))}${odCard("Suscriptores ganados en 7 días", od("subs"))}${odCard("Videos publicados en 7 días", od("videos"))}</div></div>`;
   alCambiarPais(ruta);
-  const { tiempos, por } = await seriesRecientes(p, 12, top5);
-  grafLineas("g12", tiempos.map(horaDe), top5.map((cid, i) => ({ nombre: can[cid]?.nombre || cid, datos: tiempos.map((t) => por[cid]?.[t] ?? null), color: COL[i] })), { maxTicks: 13 });
-  grafDona("gcat", cats.map((x) => x[0]), cats.map((x) => x[1].viewers), cats.map((x) => COL_CAT[x[0]] || "#6b7280"));
+  const paso = p === "AR" ? 2 : 10, fin12 = tAhora(), ini12 = fin12 - 12 * 60;
+  const reales = s12.tiempos; const tiempos = []; for (let t = Math.ceil(ini12 / paso) * paso; t <= fin12; t += paso) tiempos.push(t);
+  const cerca = (cid, t) => { const o = s12.por[cid]; if (!o) return null; for (let d = 0; d < paso; d++) { if (o[t - d] != null) return o[t - d]; if (o[t + d] != null) return o[t + d]; } return null; };
+  const por = {}; top5.forEach((cid) => { por[cid] = {}; tiempos.forEach((t) => { const v = cerca(cid, t); if (v != null) por[cid][t] = v; }); });
+  grafLineas("g12", tiempos.map(horaDe), top5.map((cid, i) => ({ nombre: can[cid]?.nombre || cid, datos: tiempos.map((t) => por[cid]?.[t] ?? null), color: COL[i] })), { horas: tiempos, spanGaps: false });
+  grafDona("gcat", cats.map((x) => x[0]), cats.map((x) => x[1].viewers), cats.map((x) => COL_CAT[x[0]] || "#6b7280"), { etiquetas: true });
 };
 
 /* ---------------- Explorar */

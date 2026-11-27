@@ -45,7 +45,7 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
 #menu a svg{width:17px;height:17px}
 #menu a:hover{background:var(--hover);color:var(--t1)}
 #menu a.activo{background:var(--primary-soft);color:var(--primary)}
-#menu a.activo::before{content:"";position:absolute;left:-12px;width:3px;height:22px;border-radius:0 3px 3px 0;background:var(--primary)}
+
 
 /* contenido */
 #vista{margin-left:var(--sidebar-w);padding:calc(var(--topbar-h) + 22px) 26px 40px;min-height:100vh;max-width:calc(1640px + var(--sidebar-w))}
@@ -368,3 +368,8 @@ tbody tr:hover td{background:var(--hover)}
 .k4 b{display:block;font-size:16px;margin-top:3px}
 @media (max-width:1200px){.grid-cats,.grid-fin,.grid-podios{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-kpi5{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:760px){.grid-cats,.grid-fin,.grid-podios{grid-template-columns:1fr}.grid-kpi5{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-kpi4{grid-template-columns:repeat(2,minmax(0,1fr))}.cmp-cab{grid-template-columns:1fr}.pz-grid{grid-template-columns:1fr!important}.canal-btns{margin-left:0}}
+
+.usuario{display:flex;align-items:center;gap:8px;background:var(--s2);border:1px solid var(--borde);border-radius:999px;padding:4px 10px 4px 4px;cursor:pointer;color:var(--t1);font-weight:600;font-size:13px}
+.usuario-i{width:28px;height:28px;border-radius:50%;background:#2a2f39;display:grid;place-items:center;color:var(--t2)}
+.usuario-i svg{width:16px;height:16px}
+@media (max-width:760px){.usuario-n,.usuario>svg:last-child{display:none}.usuario{padding:3px;border:0;background:none}}
